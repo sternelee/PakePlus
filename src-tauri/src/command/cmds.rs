@@ -749,6 +749,9 @@ pub fn png_to_icns(base64_png: String, output_dir: String) -> Result<(), String>
 
 // ─── LLM Studio commands ─────────────────────────────────────────────────────
 
+/// Maximum output tokens sent to every LLM provider.
+const LLM_MAX_TOKENS: u32 = 8192;
+
 /// Stream responses from an LLM provider and forward each chunk as a Tauri
 /// event so the frontend can render the text incrementally.
 ///
@@ -794,19 +797,24 @@ pub async fn llm_chat_stream(
             })
             .unwrap_or_default();
 
-        serde_json::json!({
+        // Build the body conditionally so we don't send an empty "system" field,
+        // which the Anthropic API rejects.
+        let mut body = serde_json::json!({
             "model": model,
             "messages": turns,
-            "system": system_content,
-            "max_tokens": 8192,
+            "max_tokens": LLM_MAX_TOKENS,
             "stream": true
-        })
+        });
+        if !system_content.is_empty() {
+            body["system"] = serde_json::Value::String(system_content);
+        }
+        body
     } else {
         serde_json::json!({
             "model": model,
             "messages": messages,
             "stream": true,
-            "max_tokens": 8192
+            "max_tokens": LLM_MAX_TOKENS
         })
     };
 
@@ -947,4 +955,177 @@ pub async fn open_llm_studio(handle: AppHandle) {
     {
         eprintln!("Failed to open LLM Studio window: {}", e);
     }
+}
+
+/// Write a single text file inside a project directory.
+///
+/// `project_dir` is the absolute path of the project root.
+/// `rel_path`    is the relative file path (e.g. `"src/app.js"`).
+///
+/// All intermediate directories are created automatically.
+/// Uses `Path::components()` to sanitise the path cross-platform:
+///   - Strips leading `/` and `\` separators.
+///   - Rejects `..` components (path traversal).
+///   - Rejects components that contain `:` (Windows absolute-path injection).
+///   - Verifies the final resolved path starts with `project_dir`.
+/// Returns the absolute path of the written file.
+#[tauri::command]
+pub fn write_project_file(
+    project_dir: String,
+    rel_path: String,
+    content: String,
+) -> Result<String, String> {
+    use std::path::Component;
+
+    let base = PathBuf::from(&project_dir)
+        .canonicalize()
+        .map_err(|e| format!("Invalid project dir: {}", e))?;
+
+    // Normalise separators then walk the component list.
+    let normalised = rel_path.replace('\\', "/");
+    let mut safe = PathBuf::new();
+
+    for comp in Path::new(&normalised).components() {
+        match comp {
+            Component::Normal(c) => {
+                let s = c.to_string_lossy();
+                // Reject Windows drive letters and UNC path components.
+                if s.contains(':') {
+                    return Err(format!("Illegal path component: {}", s));
+                }
+                safe.push(c);
+            }
+            // Skip RootDir, Prefix, and CurDir; reject ParentDir.
+            Component::ParentDir => return Err("Path traversal not allowed".into()),
+            _ => {}
+        }
+    }
+
+    if safe.as_os_str().is_empty() {
+        return Err("Invalid relative path".into());
+    }
+
+    let abs = base.join(&safe);
+
+    // Final containment check: the resolved parent must be inside base.
+    let parent = abs.parent().ok_or("Invalid file path")?;
+    let canon_parent = {
+        // Parent may not exist yet; walk up to the first existing ancestor.
+        let mut p = parent.to_path_buf();
+        while !p.exists() {
+            p = p
+                .parent()
+                .ok_or("Cannot resolve parent directory")?
+                .to_path_buf();
+        }
+        p.canonicalize().map_err(|e| e.to_string())?
+    };
+    if !canon_parent.starts_with(&base) {
+        return Err("Path escapes project directory".into());
+    }
+
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    fs::write(&abs, content.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(abs.to_string_lossy().to_string())
+}
+
+/// Read all text files in a project directory (recursively).
+///
+/// Returns a JSON array of `{ "path": "<relative>", "content": "<text>" }`.
+/// Binary files and hidden entries (`.git`, etc.) are skipped automatically.
+#[tauri::command]
+pub fn read_project_files(project_dir: String) -> Result<Vec<serde_json::Value>, String> {
+    const TEXT_EXTS: &[&str] = &[
+        "html",
+        "htm",
+        "css",
+        "js",
+        "ts",
+        "jsx",
+        "tsx",
+        "json",
+        "md",
+        "txt",
+        "svg",
+        "vue",
+        "yaml",
+        "yml",
+        "toml",
+        "xml",
+        "sh",
+        "env",
+        "gitignore",
+        "py",
+        "rs",
+        "go",
+        "rb",
+        "php",
+    ];
+
+    /// Directory names that should never be walked (build artifacts, large deps).
+    const SKIP_DIRS: &[&str] = &[
+        "node_modules",
+        "target",
+        ".git",
+        "__pycache__",
+        ".cache",
+        "dist",
+        ".next",
+        ".nuxt",
+        "vendor",
+    ];
+
+    let base = PathBuf::from(&project_dir);
+    if !base.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut files: Vec<serde_json::Value> = Vec::new();
+
+    for entry in WalkDir::new(&base)
+        .min_depth(1)
+        .into_iter()
+        .filter_entry(|e| {
+            // Prune skipped directories so WalkDir does not descend into them.
+            let name = e.file_name().to_string_lossy();
+            // Skip hidden entries (names starting with '.') and known large dirs.
+            let is_hidden = name.starts_with('.');
+            let is_skipped = SKIP_DIRS.contains(&name.as_ref());
+            !(is_hidden || is_skipped)
+        })
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let rel = match path.strip_prefix(&base) {
+            Ok(r) => r.to_string_lossy().replace('\\', "/"),
+            Err(_) => continue,
+        };
+
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        if !TEXT_EXTS.contains(&ext.as_str()) {
+            continue;
+        }
+
+        if let Ok(content) = fs::read_to_string(path) {
+            files.push(serde_json::json!({ "path": rel, "content": content }));
+        }
+    }
+
+    files.sort_by(|a, b| {
+        a["path"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["path"].as_str().unwrap_or(""))
+    });
+
+    Ok(files)
 }

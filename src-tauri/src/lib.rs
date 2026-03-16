@@ -82,6 +82,8 @@ pub fn run() {
             command::cmds::llm_chat_stream,
             command::cmds::save_llm_page,
             command::cmds::open_llm_studio,
+            command::cmds::write_project_file,
+            command::cmds::read_project_files,
         ])
         .setup(|app| {
             tauri::async_runtime::block_on(async move {
