@@ -19,6 +19,7 @@ use std::time::Instant;
 use tauri::WindowEvent;
 use tauri::{
     path::BaseDirectory, utils::config::WindowConfig, AppHandle, Emitter, LogicalSize, Manager,
+    WebviewUrl,
 };
 use tauri_plugin_http::reqwest;
 use walkdir::WalkDir;
@@ -744,4 +745,206 @@ pub fn png_to_icns(base64_png: String, output_dir: String) -> Result<(), String>
     let _ = fs::remove_file(&input_png_path);
     let _ = fs::remove_dir_all(&iconset_path);
     Ok(())
+}
+
+// ─── LLM Studio commands ─────────────────────────────────────────────────────
+
+/// Stream responses from an LLM provider and forward each chunk as a Tauri
+/// event so the frontend can render the text incrementally.
+///
+/// Supported providers:
+///  - "openai"    – OpenAI-compatible (ChatGPT, DeepSeek, Ollama, custom)
+///  - "anthropic" – Anthropic Claude (uses the Messages API)
+///
+/// The caller must supply a unique `event_id`.  Two events are emitted:
+///  - `llm_chunk_<event_id>`  – payload: one text chunk (String)
+///  - `llm_done_<event_id>`   – payload: full accumulated response (String)
+#[tauri::command]
+pub async fn llm_chat_stream(
+    app: AppHandle,
+    provider: String,
+    api_key: String,
+    model: String,
+    messages: serde_json::Value,
+    base_url: String,
+    event_id: String,
+) -> Result<String, String> {
+    let client = Client::new();
+
+    // Build the JSON request body and headers depending on provider.
+    let is_anthropic = provider == "anthropic";
+
+    let body = if is_anthropic {
+        // Anthropic's Messages API separates the system prompt from the
+        // conversation turns.
+        let system_content = messages
+            .as_array()
+            .and_then(|a| a.iter().find(|m| m["role"] == "system"))
+            .and_then(|m| m["content"].as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let turns: Vec<serde_json::Value> = messages
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter(|m| m["role"] != "system")
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        serde_json::json!({
+            "model": model,
+            "messages": turns,
+            "system": system_content,
+            "max_tokens": 8192,
+            "stream": true
+        })
+    } else {
+        serde_json::json!({
+            "model": model,
+            "messages": messages,
+            "stream": true,
+            "max_tokens": 8192
+        })
+    };
+
+    let request = if is_anthropic {
+        client
+            .post(&base_url)
+            .header("content-type", "application/json")
+            .header("x-api-key", &api_key)
+            .header("anthropic-version", "2023-06-01")
+    } else {
+        client
+            .post(&base_url)
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {}", api_key))
+    };
+
+    let resp = request
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let err_text = resp.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {}", status, err_text));
+    }
+
+    let mut full_content = String::new();
+    let mut stream = resp.bytes_stream();
+    // Buffer for incomplete SSE lines that arrive across chunk boundaries.
+    let mut line_buf = String::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        line_buf.push_str(&String::from_utf8_lossy(&chunk));
+
+        // Process every complete line in the buffer.
+        while let Some(nl) = line_buf.find('\n') {
+            let raw_line = line_buf[..nl].trim().to_string();
+            line_buf = line_buf[nl + 1..].to_string();
+
+            if raw_line.is_empty() || raw_line == "data: [DONE]" {
+                continue;
+            }
+
+            if let Some(data) = raw_line.strip_prefix("data: ") {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                    let piece = if is_anthropic {
+                        // Anthropic delta format: {"type":"content_block_delta","delta":{"text":"…"}}
+                        json.get("delta")
+                            .and_then(|d| d.get("text"))
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("")
+                            .to_string()
+                    } else {
+                        // OpenAI-compatible delta: {"choices":[{"delta":{"content":"…"}}]}
+                        json.get("choices")
+                            .and_then(|c| c.get(0))
+                            .and_then(|c| c.get("delta"))
+                            .and_then(|d| d.get("content"))
+                            .and_then(|c| c.as_str())
+                            .unwrap_or("")
+                            .to_string()
+                    };
+
+                    if !piece.is_empty() {
+                        full_content.push_str(&piece);
+                        let _ = app.emit(&format!("llm_chunk_{}", event_id), &piece);
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = app.emit(&format!("llm_done_{}", event_id), &full_content);
+    Ok(full_content)
+}
+
+/// Save AI-generated HTML content to the user's app-data directory under a
+/// project-specific subdirectory so PakePlus can later package it.
+///
+/// Returns the absolute path of the saved `index.html`.
+#[tauri::command]
+pub async fn save_llm_page(
+    app: AppHandle,
+    html_content: String,
+    project_name: String,
+) -> Result<String, String> {
+    // Resolve a writable directory:  <AppData>/llm-pages/<project_name>/
+    let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
+
+    // Sanitise the project name so it is safe as a directory component.
+    let safe_name: String = project_name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let safe_name = if safe_name.is_empty() {
+        "llm-page".to_string()
+    } else {
+        safe_name
+    };
+
+    let project_dir = base.join("llm-pages").join(&safe_name);
+    fs::create_dir_all(&project_dir).map_err(|e| e.to_string())?;
+
+    let html_path = project_dir.join("index.html");
+    fs::write(&html_path, &html_content).map_err(|e| e.to_string())?;
+
+    Ok(html_path.to_string_lossy().to_string())
+}
+
+/// Open (or focus) the PakePlus AI Studio window.
+/// The window loads `llm-studio.html` from the frontend distribution.
+#[tauri::command]
+pub async fn open_llm_studio(handle: AppHandle) {
+    const LABEL: &str = "LLMStudio";
+
+    if let Some(win) = handle.get_webview_window(LABEL) {
+        let _ = win.set_focus();
+        return;
+    }
+
+    if let Err(e) =
+        tauri::WebviewWindowBuilder::new(&handle, LABEL, WebviewUrl::App("llm-studio.html".into()))
+            .title("PakePlus AI Studio")
+            .inner_size(1400.0, 900.0)
+            .min_inner_size(900.0, 600.0)
+            .resizable(true)
+            .center()
+            .build()
+    {
+        eprintln!("Failed to open LLM Studio window: {}", e);
+    }
 }

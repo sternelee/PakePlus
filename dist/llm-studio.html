@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PakePlus AI Studio</title>
+  <style>
+    /* ── Design tokens ───────────────────────────────────────────── */
+    :root {
+      --bg0: #0d1117;
+      --bg1: #161b22;
+      --bg2: #21262d;
+      --bg3: #2d333b;
+      --border: #30363d;
+      --txt0: #e6edf3;
+      --txt1: #8b949e;
+      --accent: #58a6ff;
+      --accent2: #79c0ff;
+      --green: #3fb950;
+      --yellow: #d29922;
+      --red: #f85149;
+      --radius: 6px;
+      --mono: "Cascadia Code","Fira Code","JetBrains Mono","Consolas",monospace;
+    }
+
+    /* ── Reset ───────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                   "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg0);
+      color: var(--txt0);
+      font-size: 13px;
+      overflow: hidden;
+    }
+
+    /* ── Layout skeleton ─────────────────────────────────────────── */
+    .app { display: flex; flex-direction: column; height: 100vh; }
+
+    /* ── Top bar ─────────────────────────────────────────────────── */
+    .topbar {
+      flex-shrink: 0;
+      background: var(--bg1);
+      border-bottom: 1px solid var(--border);
+      padding: 0 14px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .topbar-logo { font-size: 18px; }
+    .topbar-title { font-weight: 600; font-size: 14px; }
+    .topbar-sub   { color: var(--txt1); font-size: 11px; }
+    .topbar-space { flex: 1; }
+    .status-badge {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 11px; color: var(--txt1);
+    }
+    .status-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--txt1); flex-shrink: 0;
+    }
+    .status-dot.ready    { background: var(--green);
+                           box-shadow: 0 0 5px var(--green); }
+    .status-dot.working  { background: var(--yellow);
+                           animation: blink 1s ease-in-out infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    /* ── Progress stripe ──────────────────────────────────────────── */
+    .progress {
+      flex-shrink: 0; height: 2px; background: var(--border); overflow: hidden;
+      visibility: hidden;
+    }
+    .progress.show { visibility: visible; }
+    .progress::after {
+      content: ""; display: block; height: 100%; width: 35%;
+      background: var(--accent);
+      animation: slide 1.4s ease-in-out infinite;
+    }
+    @keyframes slide { 0%{margin-left:-35%} 100%{margin-left:100%} }
+
+    /* ── Body row ─────────────────────────────────────────────────── */
+    .body-row {
+      flex: 1; display: flex; overflow: hidden; min-height: 0;
+    }
+
+    /* ── Left panel ───────────────────────────────────────────────── */
+    .left {
+      width: 340px; min-width: 240px; max-width: 520px;
+      display: flex; flex-direction: column;
+      background: var(--bg1);
+      border-right: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    /* ── Resize handle (horizontal) ───────────────────────────────── */
+    .h-drag {
+      width: 4px; cursor: col-resize; background: transparent; flex-shrink: 0;
+      transition: background .2s;
+    }
+    .h-drag:hover { background: var(--accent); }
+
+    /* ── Right panel ──────────────────────────────────────────────── */
+    .right {
+      flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0;
+    }
+
+    /* ── Accordion card ───────────────────────────────────────────── */
+    .card { border-bottom: 1px solid var(--border); }
+    .card-head {
+      padding: 8px 12px; cursor: pointer; user-select: none;
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 11px; font-weight: 700; letter-spacing: .6px;
+      text-transform: uppercase; color: var(--txt1);
+    }
+    .card-head:hover { color: var(--txt0); }
+    .card-body { padding: 4px 12px 12px; }
+    .card-body.collapsed { display: none; }
+
+    /* ── Form helpers ─────────────────────────────────────────────── */
+    .fg { margin-bottom: 8px; }
+    .fg:last-child { margin-bottom: 0; }
+    label { display: block; font-size: 11px; color: var(--txt1); margin-bottom: 3px; }
+    input[type=text], input[type=password], select, textarea {
+      width: 100%; background: var(--bg3); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--txt0); padding: 5px 9px;
+      font-size: 12px; outline: none; font-family: inherit;
+      transition: border-color .15s;
+    }
+    input[type=text]:focus, input[type=password]:focus,
+    select:focus, textarea:focus { border-color: var(--accent); }
+    select { cursor: pointer; }
+    .pw-wrap { position: relative; }
+    .pw-wrap input { padding-right: 32px; }
+    .pw-eye {
+      position: absolute; right: 7px; top: 50%; transform: translateY(-50%);
+      background: none; border: none; cursor: pointer;
+      color: var(--txt1); font-size: 13px; line-height: 1;
+    }
+    .pw-eye:hover { color: var(--txt0); }
+    .row2 { display: flex; gap: 8px; }
+    .row2 .fg { flex: 1; }
+
+    /* ── Chat pane ────────────────────────────────────────────────── */
+    .chat-pane {
+      flex: 1; display: flex; flex-direction: column; overflow: hidden;
+    }
+    .chat-head {
+      padding: 6px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 11px; font-weight: 700; letter-spacing: .6px;
+      text-transform: uppercase; color: var(--txt1);
+    }
+    .msgs {
+      flex: 1; overflow-y: auto; padding: 10px;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .msg {
+      padding: 8px 10px; border-radius: var(--radius);
+      font-size: 12px; line-height: 1.55;
+    }
+    .msg.user {
+      background: rgba(88,166,255,.1); border: 1px solid rgba(88,166,255,.25);
+      margin-left: 12px;
+    }
+    .msg.assistant {
+      background: var(--bg2); border: 1px solid var(--border);
+      margin-right: 12px;
+    }
+    .msg.sysmsg {
+      background: rgba(63,185,80,.08); border: 1px solid rgba(63,185,80,.25);
+      color: var(--green); font-size: 11px; text-align: center;
+    }
+    .msg.errmsg {
+      background: rgba(248,81,73,.08); border: 1px solid rgba(248,81,73,.25);
+      color: var(--red);
+    }
+    .msg-role {
+      font-size: 10px; font-weight: 700; letter-spacing: .4px;
+      text-transform: uppercase; margin-bottom: 3px; color: var(--txt1);
+    }
+    .msg.user      .msg-role { color: var(--accent); }
+    .msg.assistant .msg-role { color: var(--green); }
+    .dot-anim { display:inline-flex; gap:3px; align-items:center; }
+    .dot-anim span {
+      width:5px; height:5px; border-radius:50%; background:var(--txt1);
+      animation: dot 1s ease-in-out infinite;
+    }
+    .dot-anim span:nth-child(2){animation-delay:.2s}
+    .dot-anim span:nth-child(3){animation-delay:.4s}
+    @keyframes dot{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}
+
+    .chat-empty {
+      flex:1; display:flex; flex-direction:column;
+      align-items:center; justify-content:center;
+      gap:8px; padding:20px; text-align:center;
+    }
+    .chat-empty .ico { font-size:36px; }
+    .chat-empty h3   { font-size:14px; font-weight:600; }
+    .chat-empty p    { font-size:12px; color:var(--txt1); line-height:1.6; }
+
+    /* ── Prompt input ─────────────────────────────────────────────── */
+    .prompt-area {
+      padding: 10px; border-top: 1px solid var(--border); flex-shrink: 0;
+    }
+    .prompt-wrap { position: relative; }
+    .prompt-ta {
+      width:100%; height:76px; resize:none;
+      padding: 8px 38px 8px 10px; font-size:12px;
+      background:var(--bg3); border:1px solid var(--border);
+      border-radius:var(--radius); color:var(--txt0); outline:none;
+      font-family:inherit; line-height:1.5; transition:border-color .15s;
+    }
+    .prompt-ta:focus { border-color:var(--accent); }
+    .send-btn {
+      position:absolute; bottom:6px; right:6px;
+      width:26px; height:26px; border-radius:5px;
+      background:var(--accent); border:none; cursor:pointer;
+      color:#0d1117; font-size:14px; font-weight:700;
+      display:flex; align-items:center; justify-content:center;
+      transition:background .15s;
+    }
+    .send-btn:hover:not(:disabled) { background:var(--accent2); }
+    .send-btn:disabled { opacity:.45; cursor:not-allowed; }
+    .prompt-hint { font-size:10px; color:var(--txt1); margin-top:5px; }
+
+    /* ── Editor section ───────────────────────────────────────────── */
+    .editor-sec {
+      display:flex; flex-direction:column; overflow:hidden;
+      border-bottom:1px solid var(--border);
+    }
+    .panel-head {
+      flex-shrink:0; background:var(--bg1);
+      border-bottom:1px solid var(--border);
+      padding:5px 10px;
+      display:flex; align-items:center; gap:6px;
+    }
+    .panel-label {
+      font-size:11px; font-weight:700; text-transform:uppercase;
+      letter-spacing:.5px; color:var(--txt1); flex:1;
+    }
+
+    /* ── Code textarea ────────────────────────────────────────────── */
+    .code-ta {
+      flex:1; width:100%; border:none; outline:none; resize:none;
+      background:var(--bg0); color:#cdd6f4; font-family:var(--mono);
+      font-size:12px; line-height:1.65; padding:12px; tab-size:2;
+    }
+
+    /* ── Vertical drag ────────────────────────────────────────────── */
+    .v-drag {
+      height:4px; cursor:row-resize; background:var(--border); flex-shrink:0;
+      transition:background .2s;
+    }
+    .v-drag:hover { background:var(--accent); }
+
+    /* ── Preview section ──────────────────────────────────────────── */
+    .preview-sec {
+      flex:1; display:flex; flex-direction:column; overflow:hidden;
+      min-height:120px;
+    }
+    .preview-ph {
+      flex:1; display:flex; flex-direction:column;
+      align-items:center; justify-content:center;
+      gap:6px; color:var(--txt1);
+    }
+    .preview-ph .ico { font-size:28px; }
+    .preview-ph p    { font-size:12px; }
+    .preview-frame { flex:1; border:none; background:#fff; width:100%; }
+    .hidden { display:none!important; }
+
+    /* ── Action bar ───────────────────────────────────────────────── */
+    .actions {
+      flex-shrink:0; background:var(--bg1);
+      border-top:1px solid var(--border);
+      padding:7px 12px;
+      display:flex; align-items:center; gap:6px;
+    }
+    .project-lbl { font-size:11px; color:var(--txt1); white-space:nowrap; }
+    .project-input {
+      background:var(--bg3); border:1px solid var(--border);
+      border-radius:var(--radius); color:var(--txt0);
+      padding:4px 8px; font-size:12px; outline:none; width:160px;
+    }
+    .project-input:focus { border-color:var(--accent); }
+    .spacer { flex:1; }
+
+    /* ── Buttons ──────────────────────────────────────────────────── */
+    .btn {
+      padding:5px 12px; border-radius:var(--radius); border:none;
+      cursor:pointer; font-size:12px; font-weight:500;
+      display:flex; align-items:center; gap:5px; white-space:nowrap;
+      transition:opacity .15s, background .15s;
+    }
+    .btn:disabled { opacity:.45; cursor:not-allowed; }
+    .btn-ghost {
+      background:var(--bg2); color:var(--txt0);
+      border:1px solid var(--border);
+    }
+    .btn-ghost:hover:not(:disabled) { background:var(--bg3); }
+    .btn-primary { background:var(--accent); color:#0d1117; }
+    .btn-primary:hover:not(:disabled) { background:var(--accent2); }
+    .btn-success { background:var(--green); color:#0d1117; }
+    .btn-success:hover:not(:disabled) { opacity:.85; }
+    .btn-sm { padding:3px 8px; font-size:11px; }
+
+    /* ── Toast ────────────────────────────────────────────────────── */
+    .toast {
+      position:fixed; bottom:18px; right:18px; z-index:9999;
+      background:var(--bg2); border:1px solid var(--border);
+      border-radius:var(--radius); padding:8px 14px;
+      font-size:12px; max-width:320px; line-height:1.5;
+      animation:toast-in .25s ease;
+    }
+    .toast.ok  { border-color:var(--green); color:var(--green); }
+    .toast.err { border-color:var(--red);   color:var(--red);   }
+    @keyframes toast-in {
+      from{transform:translateY(14px);opacity:0}
+      to  {transform:translateY(0);opacity:1}
+    }
+
+    /* ── Scrollbars ───────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width:5px; height:5px; }
+    ::-webkit-scrollbar-track  { background:transparent; }
+    ::-webkit-scrollbar-thumb  { background:var(--border); border-radius:3px; }
+    ::-webkit-scrollbar-thumb:hover { background:#4a4f58; }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Top bar ─────────────────────────────────────────────────────── -->
+  <div class="topbar">
+    <span class="topbar-logo">🤖</span>
+    <div>
+      <div class="topbar-title">PakePlus AI Studio</div>
+      <div class="topbar-sub">LLM Page Generator · Tauri v2</div>
+    </div>
+    <div class="topbar-space"></div>
+    <div class="status-badge">
+      <div class="status-dot" id="sDot"></div>
+      <span id="sTxt">Initialising…</span>
+    </div>
+  </div>
+
+  <!-- ── Progress stripe ─────────────────────────────────────────────── -->
+  <div class="progress" id="progress"></div>
+
+  <!-- ── Body row ────────────────────────────────────────────────────── -->
+  <div class="body-row">
+
+    <!-- ── Left panel ─────────────────────────────────────────────────── -->
+    <div class="left" id="leftPanel">
+
+      <!-- Provider settings accordion -->
+      <div class="card">
+        <div class="card-head" id="settingsHead" onclick="toggleCard('settingsBody','settingsChevron')">
+          <span>⚙&nbsp; Provider Settings</span>
+          <span id="settingsChevron">▼</span>
+        </div>
+        <div class="card-body" id="settingsBody">
+          <div class="fg">
+            <label>LLM Provider</label>
+            <select id="providerSel" onchange="onProviderChange()">
+              <option value="openai">OpenAI (ChatGPT)</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="ollama">Ollama (Local)</option>
+              <option value="custom">Custom / Compatible</option>
+            </select>
+          </div>
+          <div class="fg" id="apiKeyFg">
+            <label>API Key</label>
+            <div class="pw-wrap">
+              <input type="password" id="apiKeyIn" placeholder="sk-…" autocomplete="off" />
+              <button class="pw-eye" onclick="togglePw()" title="Show/hide key">👁</button>
+            </div>
+          </div>
+          <div class="row2">
+            <div class="fg">
+              <label>Model</label>
+              <select id="modelSel"></select>
+            </div>
+          </div>
+          <div class="fg" id="baseUrlFg" style="display:none">
+            <label>Base URL</label>
+            <input type="text" id="baseUrlIn" placeholder="https://…/v1/chat/completions" />
+          </div>
+          <div class="fg" id="customModelFg" style="display:none">
+            <label>Custom Model Name</label>
+            <input type="text" id="customModelIn" placeholder="gpt-4o" />
+          </div>
+        </div>
+      </div><!-- /card -->
+
+      <!-- Chat pane -->
+      <div class="chat-pane">
+        <div class="chat-head">
+          <span>💬&nbsp; Conversation</span>
+          <button class="btn btn-ghost btn-sm" onclick="clearChat()">Clear</button>
+        </div>
+        <div class="msgs" id="msgs">
+          <div class="chat-empty" id="chatEmpty">
+            <div class="ico">🎨</div>
+            <h3>Design your App</h3>
+            <p>Describe the desktop application you want to build.<br>
+               The AI will generate a complete, self-contained HTML page<br>
+               with Tauri v2 API support baked in.</p>
+          </div>
+        </div>
+        <div class="prompt-area">
+          <div class="prompt-wrap">
+            <textarea
+              class="prompt-ta"
+              id="promptIn"
+              placeholder="Describe your app… e.g. 'A markdown editor with live preview, file open/save using Tauri dialogs, and a dark/light theme toggle'"
+              onkeydown="onKeydown(event)"
+            ></textarea>
+            <button class="send-btn" id="sendBtn" onclick="send()" title="Send (Ctrl+Enter)">↑</button>
+          </div>
+          <div class="prompt-hint">Ctrl+Enter to send &nbsp;·&nbsp; Describe Tauri features you need</div>
+        </div>
+      </div><!-- /chat-pane -->
+
+    </div><!-- /left -->
+
+    <!-- Horizontal drag -->
+    <div class="h-drag" id="hDrag" onmousedown="startHDrag(event)"></div>
+
+    <!-- ── Right panel ─────────────────────────────────────────────────── -->
+    <div class="right">
+
+      <!-- Code editor -->
+      <div class="editor-sec" id="editorSec">
+        <div class="panel-head">
+          <span class="panel-label">📝&nbsp; Generated Code</span>
+          <button class="btn btn-ghost btn-sm" onclick="copyCode()">Copy</button>
+          <button class="btn btn-ghost btn-sm" onclick="runPreview()">▶ Preview</button>
+        </div>
+        <textarea
+          class="code-ta"
+          id="codeTa"
+          placeholder="Generated HTML will appear here…&#10;You can also paste or edit code directly."
+          spellcheck="false"
+          onkeydown="taKey(event)"
+          oninput="onCodeInput()"
+        ></textarea>
+      </div>
+
+      <!-- Vertical drag -->
+      <div class="v-drag" id="vDrag" onmousedown="startVDrag(event)"></div>
+
+      <!-- Preview -->
+      <div class="preview-sec">
+        <div class="panel-head">
+          <span class="panel-label">👁&nbsp; Live Preview</span>
+          <button class="btn btn-ghost btn-sm" onclick="popPreview()">⤢ Pop-out</button>
+        </div>
+        <div class="preview-ph" id="previewPh">
+          <div class="ico">🖥</div>
+          <p>Preview appears after code is generated</p>
+        </div>
+        <iframe
+          class="preview-frame hidden"
+          id="previewFrame"
+          sandbox="allow-scripts allow-same-origin allow-forms"
+          title="App Preview"
+        ></iframe>
+      </div>
+
+      <!-- Action bar -->
+      <div class="actions">
+        <span class="project-lbl">App name:</span>
+        <input type="text" class="project-input" id="projectName" value="my-ai-app" placeholder="app-name" />
+        <div class="spacer"></div>
+        <button class="btn btn-ghost" onclick="saveCode()" title="Save HTML file">💾 Save</button>
+        <button class="btn btn-primary" onclick="openInWindow()" title="Open in Tauri window" id="openWinBtn">🚀 Open</button>
+        <button class="btn btn-success" onclick="packageApp()" title="Save for PakePlus packaging" id="pkgBtn">📦 Package</button>
+      </div>
+
+    </div><!-- /right -->
+
+  </div><!-- /body-row -->
+
+</div><!-- /app -->
+
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   PakePlus AI Studio — main script
+   ════════════════════════════════════════════════════════════════════════ */
+
+// ── Provider catalogue ────────────────────────────────────────────────────
+const PROVIDERS = {
+  openai: {
+    models: ["gpt-4o","gpt-4o-mini","gpt-4-turbo","o1-preview","o1-mini","gpt-3.5-turbo"],
+    url:    "https://api.openai.com/v1/chat/completions",
+    needKey: true
+  },
+  anthropic: {
+    models: ["claude-3-5-sonnet-20241022","claude-3-opus-20240229",
+             "claude-3-sonnet-20240229","claude-3-haiku-20240307"],
+    url:    "https://api.anthropic.com/v1/messages",
+    needKey: true
+  },
+  deepseek: {
+    models: ["deepseek-chat","deepseek-reasoner"],
+    url:    "https://api.deepseek.com/v1/chat/completions",
+    needKey: true
+  },
+  ollama: {
+    models: ["qwen2.5-coder:7b","codellama","llama3.2","mistral",
+             "deepseek-coder-v2","gemma2"],
+    url:    "http://localhost:11434/v1/chat/completions",
+    needKey: false
+  },
+  custom: { models: [], url: "", needKey: true }
+};
+
+// ── System prompt ─────────────────────────────────────────────────────────
+const SYS = `You are an expert web developer creating desktop applications \
+with HTML, CSS, and JavaScript that run inside a Tauri v2 desktop app.
+
+CRITICAL OUTPUT RULES:
+1. Output ONLY a single, complete, self-contained HTML file.
+2. Embed ALL CSS inside <style> tags and ALL JS inside <script> tags.
+3. Use ONLY system fonts — no Google Fonts or external CDN dependencies.
+4. Start your response with <!DOCTYPE html> and include nothing else.
+5. The application must be fully functional, not a mere mockup.
+
+AVAILABLE TAURI v2 APIs  (window.__TAURI__ namespace):
+
+  // File-system (tauri-plugin-fs)
+  const { readTextFile, writeTextFile, mkdir, readDir, exists, remove }
+        = window.__TAURI__.fs;
+
+  // Native dialogs (tauri-plugin-dialog)
+  const { open, save, message, ask, confirm }
+        = window.__TAURI__.dialog;
+
+  // Clipboard (tauri-plugin-clipboard-manager)
+  const { readText, writeText }
+        = window.__TAURI__.clipboard;
+
+  // OS info (tauri-plugin-os)
+  const { platform, arch, version } = window.__TAURI__.os;
+
+  // Persistent store (tauri-plugin-store)
+  // Prefer window.localStorage for simple storage.
+
+  // System notifications (tauri-plugin-notification)
+  const { sendNotification } = window.__TAURI__.notification;
+
+  // Inter-window events (core)
+  const { listen, emit } = window.__TAURI__.event;
+
+  // Call custom Rust commands (core)
+  const result = await window.__TAURI__.core.invoke('command_name', { param: value });
+
+  // HTTP requests — use native fetch(), CORS is bypassed in Tauri
+
+GUARD PATTERN (always check before using Tauri APIs):
+  const isTauri = typeof window.__TAURI__ !== 'undefined';
+
+COMMON SNIPPET — open & read a file:
+  const path = await window.__TAURI__.dialog.open({
+    filters: [{ name: 'Text', extensions: ['txt','md'] }]
+  });
+  if (path) {
+    const text = await window.__TAURI__.fs.readTextFile(path);
+  }
+
+DESIGN REQUIREMENTS:
+- Use CSS custom properties for theming.
+- Design for a desktop window, not a phone.
+- Include hover states, smooth transitions, and keyboard shortcuts.
+- Support graceful window resizing.
+- Include error handling and user feedback (loading states, etc.).
+`;
+
+// ── App state ─────────────────────────────────────────────────────────────
+const S = {
+  busy: false,
+  history: [],  // {role, content}
+  unlisten: []
+};
+
+// ── Tauri availability ────────────────────────────────────────────────────
+const isTauri = typeof window.__TAURI__ !== 'undefined';
+
+// ── Init ──────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  loadSettings();
+  onProviderChange();
+  setupDrags();
+  setStatus('ready', isTauri ? 'Ready (Tauri)' : 'Ready (browser)');
+  q('#promptIn').focus();
+});
+
+// ── Utilities ─────────────────────────────────────────────────────────────
+const q  = sel => document.querySelector(sel);
+const id = i   => document.getElementById(i);
+
+function setStatus(type, txt) {
+  const dot = id('sDot'), tx = id('sTxt');
+  dot.className = 'status-dot' + (type === 'ready' ? ' ready' : type === 'working' ? ' working' : '');
+  tx.textContent = txt;
+}
+
+function showProgress(v) {
+  id('progress').classList.toggle('show', v);
+}
+
+function setBusy(v) {
+  S.busy = v;
+  id('sendBtn').disabled = v;
+  id('promptIn').disabled = v;
+  showProgress(v);
+  setStatus(v ? 'working' : 'ready', v ? 'Generating…' : 'Ready');
+}
+
+let _toastTimer;
+function toast(msg, type = 'ok') {
+  const old = q('.toast'); if (old) old.remove();
+  clearTimeout(_toastTimer);
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  _toastTimer = setTimeout(() => {
+    el.style.transition = 'opacity .3s';
+    el.style.opacity    = '0';
+    setTimeout(() => el.remove(), 320);
+  }, 4500);
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;')
+          .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Settings persistence ──────────────────────────────────────────────────
+function saveSettings() {
+  localStorage.setItem('pp_ai_studio', JSON.stringify({
+    provider:     id('providerSel').value,
+    apiKey:       id('apiKeyIn').value,
+    baseUrl:      id('baseUrlIn').value,
+    customModel:  id('customModelIn').value,
+    model:        id('modelSel').value,
+    projectName:  id('projectName').value
+  }));
+}
+
+function loadSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem('pp_ai_studio') || '{}');
+    if (s.provider)    id('providerSel').value  = s.provider;
+    if (s.apiKey)      id('apiKeyIn').value      = s.apiKey;
+    if (s.baseUrl)     id('baseUrlIn').value     = s.baseUrl;
+    if (s.customModel) id('customModelIn').value = s.customModel;
+    if (s.projectName) id('projectName').value   = s.projectName;
+    window._savedModel = s.model;
+  } catch (_) {}
+}
+
+// ── Provider change ───────────────────────────────────────────────────────
+function onProviderChange() {
+  const p   = id('providerSel').value;
+  const cfg = PROVIDERS[p];
+  const isCustom  = p === 'custom';
+  const isOllama  = p === 'ollama';
+
+  // Model list
+  const sel = id('modelSel');
+  sel.innerHTML = '';
+  cfg.models.forEach(m => {
+    const o = document.createElement('option');
+    o.value = o.textContent = m;
+    sel.appendChild(o);
+  });
+  if (window._savedModel) { sel.value = window._savedModel; window._savedModel = null; }
+
+  // Visibility of extra fields
+  id('apiKeyFg').style.display     = (cfg.needKey || isCustom) ? '' : 'none';
+  id('baseUrlFg').style.display    = (isCustom || isOllama) ? '' : 'none';
+  id('customModelFg').style.display = isCustom ? '' : 'none';
+
+  if (isOllama && !id('baseUrlIn').value)
+    id('baseUrlIn').value = cfg.url;
+
+  saveSettings();
+}
+
+// ── Accordion ─────────────────────────────────────────────────────────────
+function toggleCard(bodyId, chevId) {
+  const b = id(bodyId), c = id(chevId);
+  const collapsed = b.classList.toggle('collapsed');
+  c.textContent = collapsed ? '▶' : '▼';
+}
+
+function togglePw() {
+  const i = id('apiKeyIn');
+  i.type = i.type === 'password' ? 'text' : 'password';
+}
+
+// ── Chat messages ─────────────────────────────────────────────────────────
+function addMsg(role, content, streaming = false) {
+  id('chatEmpty')?.remove();
+  const el = document.createElement('div');
+  el.className = `msg ${role}`;
+  if (streaming) el.id = 'streamMsg';
+  const label = { user:'🧑 You', assistant:'🤖 AI' }[role] || role;
+  el.innerHTML = `<div class="msg-role">${label}</div>`
+    + (streaming
+        ? `<div class="msg-body"><div class="dot-anim"><span></span><span></span><span></span></div></div>`
+        : `<div class="msg-body">${escHtml(content)}</div>`);
+  id('msgs').appendChild(el);
+  id('msgs').scrollTop = 1e9;
+  return el;
+}
+
+function tickStream(chunk) {
+  const el = id('streamMsg');
+  if (!el) return;
+  const body = el.querySelector('.msg-body');
+  // Show a running character count while generating to keep the DOM light.
+  const running = (body._full || '') + chunk;
+  body._full = running;
+  body.textContent = running.length > 400
+    ? `⏳ Generating… (${running.length} chars received)`
+    : running;
+}
+
+function finalStream(full) {
+  const el = id('streamMsg');
+  if (!el) return;
+  el.removeAttribute('id');
+  const hasHtml = full.includes('<!DOCTYPE html') || full.includes('<html');
+  el.querySelector('.msg-body').textContent = hasHtml
+    ? `✅ Page generated (${full.length} chars)`
+    : full.slice(0, 260) + (full.length > 260 ? '…' : '');
+}
+
+function clearChat() {
+  S.history = [];
+  id('msgs').innerHTML = `
+    <div class="chat-empty" id="chatEmpty">
+      <div class="ico">🎨</div>
+      <h3>Design your App</h3>
+      <p>Describe the desktop application you want to build.<br>
+         The AI will generate a complete, self-contained HTML page<br>
+         with Tauri v2 API support baked in.</p>
+    </div>`;
+}
+
+// ── Send ──────────────────────────────────────────────────────────────────
+function onKeydown(e) {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); }
+}
+
+async function send() {
+  const ta = id('promptIn');
+  const txt = ta.value.trim();
+  if (!txt || S.busy) return;
+  ta.value = '';
+  saveSettings();
+
+  addMsg('user', txt);
+
+  // Build messages list (system + history + new user turn).
+  const msgs = [
+    { role: 'system', content: SYS },
+    ...S.history,
+    { role: 'user', content: txt }
+  ];
+  S.history.push({ role: 'user', content: txt });
+
+  await generate(msgs);
+}
+
+// ── Code helpers ──────────────────────────────────────────────────────────
+function extractCode(text) {
+  // 1. Fenced block: ```html … ```
+  let m = text.match(/```(?:html)?\s*(<!DOCTYPE html[\s\S]*?<\/html>)\s*```/i);
+  if (m) return m[1];
+  // 2. Raw DOCTYPE … </html>
+  m = text.match(/(<!DOCTYPE html[\s\S]*<\/html>)/i);
+  if (m) return m[1];
+  // 3. <html … </html>
+  m = text.match(/(<html[\s\S]*<\/html>)/i);
+  if (m) return m[1];
+  return null;
+}
+
+function setCode(code) {
+  id('codeTa').value = code;
+  autoPreview(code);
+}
+
+function onCodeInput() {
+  // Debounced auto-preview when user edits code directly.
+  clearTimeout(onCodeInput._t);
+  onCodeInput._t = setTimeout(() => autoPreview(id('codeTa').value), 800);
+}
+
+function autoPreview(code) {
+  if (!code || (!code.includes('<!DOCTYPE html') && !code.includes('<html'))) return;
+  renderPreview(code);
+}
+
+// ── Generate (calls Tauri backend or browser fallback) ────────────────────
+async function generate(msgs) {
+  setBusy(true);
+  addMsg('assistant', '', true);
+  let full = '';
+
+  try {
+    const provider = id('providerSel').value;
+    const apiKey   = id('apiKeyIn').value.trim();
+    const model    = id('modelSel').value || id('customModelIn').value.trim();
+    const baseUrl  = id('baseUrlIn').value.trim() || PROVIDERS[provider]?.url || '';
+
+    if (!model)   throw new Error('Please select or enter a model name.');
+    if (!baseUrl) throw new Error('Please enter the API base URL.');
+    if (PROVIDERS[provider]?.needKey && !apiKey)
+      throw new Error('An API key is required for this provider.');
+
+    const eventId = Date.now().toString();
+
+    if (isTauri && window.__TAURI__.core) {
+      // ── Tauri path: Rust backend handles the HTTP + streaming ──────────
+      const ul1 = await window.__TAURI__.event.listen(
+        `llm_chunk_${eventId}`,
+        ev => {
+          full += ev.payload;
+          tickStream(ev.payload);
+          const code = extractCode(full);
+          if (code) id('codeTa').value = code;
+        }
+      );
+      const ul2 = await window.__TAURI__.event.listen(
+        `llm_done_${eventId}`,
+        ev => { full = ev.payload; }
+      );
+      S.unlisten.push(ul1, ul2);
+
+      try {
+        await window.__TAURI__.core.invoke('llm_chat_stream', {
+          provider,
+          apiKey,
+          model,
+          messages: msgs,
+          baseUrl,
+          eventId
+        });
+      } finally {
+        ul1(); ul2();
+        S.unlisten = S.unlisten.filter(f => f !== ul1 && f !== ul2);
+      }
+
+    } else {
+      // ── Browser fallback: direct streaming fetch ───────────────────────
+      full = await fetchStream(provider, apiKey, model, baseUrl, msgs,
+        chunk => {
+          full += chunk;
+          tickStream(chunk);
+          const code = extractCode(full);
+          if (code) id('codeTa').value = code;
+        });
+    }
+
+    // Finalise
+    const code = extractCode(full) || full;
+    setCode(code);
+    finalStream(full);
+    S.history.push({ role: 'assistant', content: full });
+
+    if (code.includes('<!DOCTYPE html') || code.includes('<html'))
+      toast('✅ Page generated — preview updated', 'ok');
+    else
+      toast('⚠ Response received — check the code editor', 'ok');
+
+  } catch (err) {
+    id('streamMsg')?.remove();
+    const el = addMsg('assistant', `Error: ${err.message}`);
+    el.className += ' errmsg';
+    toast(`❌ ${err.message}`, 'err');
+  } finally {
+    setBusy(false);
+  }
+}
+
+// ── Browser streaming fetch (CORS-based, fallback only) ──────────────────
+async function fetchStream(provider, apiKey, model, baseUrl, msgs, onChunk) {
+  const hdrs = { 'Content-Type': 'application/json' };
+  let body;
+
+  if (provider === 'anthropic') {
+    hdrs['x-api-key']          = apiKey;
+    hdrs['anthropic-version']  = '2023-06-01';
+    const sys  = msgs.find(m => m.role === 'system')?.content || '';
+    const conv = msgs.filter(m => m.role !== 'system');
+    body = { model, messages: conv, system: sys, max_tokens: 8096, stream: true };
+  } else {
+    hdrs['Authorization'] = `Bearer ${apiKey}`;
+    body = { model, messages: msgs, stream: true, max_tokens: 8096 };
+  }
+
+  const resp = await fetch(baseUrl, {
+    method: 'POST', headers: hdrs, body: JSON.stringify(body)
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error(`HTTP ${resp.status}: ${t}`);
+  }
+
+  const reader  = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let acc = '';
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop() || '';
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const data = line.slice(6);
+      if (data === '[DONE]') continue;
+      try {
+        const j     = JSON.parse(data);
+        const piece = provider === 'anthropic'
+          ? j?.delta?.text || ''
+          : j?.choices?.[0]?.delta?.content || '';
+        if (piece) { acc += piece; onChunk(piece); }
+      } catch (_) {}
+    }
+  }
+  return acc;
+}
+
+// ── Preview ───────────────────────────────────────────────────────────────
+function renderPreview(html) {
+  const frame = id('previewFrame');
+  const ph    = id('previewPh');
+  ph.classList.add('hidden');
+  frame.classList.remove('hidden');
+  const blob = new Blob([html], { type: 'text/html' });
+  const url  = URL.createObjectURL(blob);
+  if (frame._blobUrl) URL.revokeObjectURL(frame._blobUrl);
+  frame._blobUrl = url;
+  frame.src      = url;
+}
+
+function runPreview() {
+  const code = id('codeTa').value.trim();
+  if (!code) { toast('No code to preview', 'err'); return; }
+  renderPreview(code);
+}
+
+function popPreview() {
+  const code = id('codeTa').value.trim();
+  if (!code) { toast('No code to pop out', 'err'); return; }
+  const blob = new Blob([code], { type: 'text/html' });
+  const url  = URL.createObjectURL(blob);
+  window.open(url, '_blank', 'width=1200,height=800,menubar=no,toolbar=no');
+}
+
+// ── Copy ──────────────────────────────────────────────────────────────────
+function copyCode() {
+  const code = id('codeTa').value;
+  if (!code) { toast('No code to copy', 'err'); return; }
+  const doCopy = () => navigator.clipboard.writeText(code)
+    .then(() => toast('✅ Copied to clipboard'))
+    .catch(() => toast('Copy failed', 'err'));
+
+  if (isTauri && window.__TAURI__.clipboard)
+    window.__TAURI__.clipboard.writeText(code)
+      .then(() => toast('✅ Copied to clipboard'))
+      .catch(doCopy);
+  else doCopy();
+}
+
+// ── Tab key in code editor ────────────────────────────────────────────────
+function taKey(e) {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const ta = e.target, s = ta.selectionStart, en = ta.selectionEnd;
+    ta.value = ta.value.slice(0, s) + '  ' + ta.value.slice(en);
+    ta.selectionStart = ta.selectionEnd = s + 2;
+  }
+}
+
+// ── Save ──────────────────────────────────────────────────────────────────
+async function saveCode() {
+  const code = id('codeTa').value.trim();
+  if (!code) { toast('No code to save', 'err'); return; }
+  const name = id('projectName').value || 'app';
+
+  if (isTauri && window.__TAURI__.dialog) {
+    try {
+      const path = await window.__TAURI__.dialog.save({
+        defaultPath: name + '.html',
+        filters: [{ name: 'HTML', extensions: ['html'] }]
+      });
+      if (path) {
+        await window.__TAURI__.fs.writeTextFile(path, code);
+        toast('✅ Saved to ' + path.split(/[/\\]/).pop());
+      }
+    } catch (e) { toast(`Save failed: ${e}`, 'err'); }
+  } else {
+    const a  = document.createElement('a');
+    a.href   = URL.createObjectURL(new Blob([code], { type: 'text/html' }));
+    a.download = name + '.html';
+    a.click();
+    toast('✅ Download started');
+  }
+}
+
+// ── Open in Tauri window ──────────────────────────────────────────────────
+async function openInWindow() {
+  const code = id('codeTa').value.trim();
+  if (!code) { toast('No code to open', 'err'); return; }
+
+  if (!isTauri || !window.__TAURI__.core) { popPreview(); return; }
+
+  try {
+    const saved = await window.__TAURI__.core.invoke('save_llm_page', {
+      htmlContent: code,
+      projectName: id('projectName').value || 'ai-preview'
+    });
+    toast(`✅ Saved to: ${saved}\n\nOpen via PakePlus → Preview.`);
+  } catch (e) { toast(`Error: ${e}`, 'err'); }
+}
+
+// ── Package app ───────────────────────────────────────────────────────────
+async function packageApp() {
+  const code = id('codeTa').value.trim();
+  if (!code) { toast('No code to package', 'err'); return; }
+  if (!isTauri || !window.__TAURI__.core) {
+    toast('⚠ Packaging requires the Tauri environment', 'err'); return;
+  }
+  try {
+    setBusy(true);
+    const path = await window.__TAURI__.core.invoke('save_llm_page', {
+      htmlContent: code,
+      projectName: id('projectName').value || 'ai-app'
+    });
+    toast(`✅ Saved to:\n${path}\n\nReturn to PakePlus and select this folder as your HTML path, then click Build.`);
+  } catch (e) { toast(`Package error: ${e}`, 'err'); }
+  finally     { setBusy(false); }
+}
+
+// ── Horizontal drag (resize left panel) ──────────────────────────────────
+let _hDrag = false, _hDragX = 0, _hDragW = 0;
+
+function setupDrags() { /* drag listeners attached via onmousedown in HTML */ }
+
+function startHDrag(e) {
+  _hDrag = true; _hDragX = e.clientX;
+  _hDragW = id('leftPanel').offsetWidth;
+  document.addEventListener('mousemove', doHDrag);
+  document.addEventListener('mouseup',   endHDrag);
+  e.preventDefault();
+}
+function doHDrag(e) {
+  if (!_hDrag) return;
+  const w = Math.max(220, Math.min(580, _hDragW + e.clientX - _hDragX));
+  id('leftPanel').style.width = w + 'px';
+}
+function endHDrag() {
+  _hDrag = false;
+  document.removeEventListener('mousemove', doHDrag);
+  document.removeEventListener('mouseup',   endHDrag);
+}
+
+// ── Vertical drag (resize editor / preview split) ─────────────────────────
+let _vDrag = false, _vDragY = 0, _vDragH = 0;
+
+function startVDrag(e) {
+  _vDrag = true; _vDragY = e.clientY;
+  _vDragH = id('editorSec').offsetHeight;
+  document.addEventListener('mousemove', doVDrag);
+  document.addEventListener('mouseup',   endVDrag);
+  e.preventDefault();
+}
+function doVDrag(e) {
+  if (!_vDrag) return;
+  const h = Math.max(80, Math.min(window.innerHeight - 200, _vDragH + e.clientY - _vDragY));
+  id('editorSec').style.height = h + 'px';
+  id('editorSec').style.flex   = 'none';
+}
+function endVDrag() {
+  _vDrag = false;
+  document.removeEventListener('mousemove', doVDrag);
+  document.removeEventListener('mouseup',   endVDrag);
+}
+</script>
+</body>
+</html>
