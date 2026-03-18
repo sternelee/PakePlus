@@ -27,9 +27,29 @@ pub fn run() {
                             &PredefinedMenuItem::select_all(handle, None)?,
                         ],
                     )?,
+                    &Submenu::with_items(
+                        handle,
+                        "Tools",
+                        true,
+                        &[&MenuItem::with_id(
+                            handle,
+                            "open_llm_studio",
+                            "AI Studio",
+                            true,
+                            None::<&str>,
+                        )?],
+                    )?,
                 ],
             );
             menu
+        })
+        .on_menu_event(|app, event| {
+            if event.id() == "open_llm_studio" {
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    command::cmds::open_llm_studio(handle).await;
+                });
+            }
         })
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_fs::init())
@@ -59,6 +79,11 @@ pub fn run() {
             command::cmds::macos_build,
             command::cmds::linux_build,
             command::cmds::build_local,
+            command::cmds::llm_chat_stream,
+            command::cmds::save_llm_page,
+            command::cmds::open_llm_studio,
+            command::cmds::write_project_file,
+            command::cmds::read_project_files,
         ])
         .setup(|app| {
             tauri::async_runtime::block_on(async move {
