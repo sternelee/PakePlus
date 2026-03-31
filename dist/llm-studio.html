@@ -1,0 +1,1352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PakePlus AI Studio</title>
+  <style>
+    /* ── Design Tokens ───────────────────────────────────────────── */
+    :root {
+      --bg0:#0d1117; --bg1:#161b22; --bg2:#21262d; --bg3:#2d333b;
+      --bdr:#30363d; --bdr2:#444c56;
+      --t0:#e6edf3; --t1:#8b949e; --t2:#6e7681;
+      --accent:#58a6ff; --accentD:rgba(88,166,255,.15); --accent2:#79c0ff;
+      --green:#3fb950; --yellow:#d29922; --red:#f85149; --purple:#bc8cff;
+      --r:6px; --r2:4px;
+      --mono:"Cascadia Code","Fira Code","JetBrains Mono","Consolas",monospace;
+      --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html,body{height:100%;background:var(--bg0);color:var(--t0);font-family:var(--sans);font-size:13px;overflow:hidden}
+
+    /* ── App shell ───────────────────────────────────────────────── */
+    .app{display:flex;flex-direction:column;height:100vh}
+
+    /* ── Topbar ──────────────────────────────────────────────────── */
+    .topbar{
+      flex-shrink:0;height:44px;background:var(--bg1);border-bottom:1px solid var(--bdr);
+      display:flex;align-items:center;padding:0 12px;gap:8px
+    }
+    .tb-logo{font-size:18px}
+    .tb-title{font-weight:700;font-size:14px}
+    .tb-sep{color:var(--bdr2);font-size:16px}
+    .tb-proj{
+      background:var(--bg3);border:1px solid var(--bdr);border-radius:var(--r2);
+      color:var(--t0);padding:3px 8px;font-size:12px;outline:none;
+      min-width:110px;max-width:180px
+    }
+    .tb-proj:focus{border-color:var(--accent)}
+    .tb-space{flex:1}
+    .status{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--t1)}
+    .s-dot{width:7px;height:7px;border-radius:50%;background:var(--t1);flex-shrink:0}
+    .s-dot.ready{background:var(--green);box-shadow:0 0 5px var(--green)}
+    .s-dot.working{background:var(--yellow);animation:blink 1s infinite}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+
+    /* ── Progress stripe ─────────────────────────────────────────── */
+    .pbar{height:2px;background:var(--bdr);flex-shrink:0;overflow:hidden;visibility:hidden}
+    .pbar.show{visibility:visible}
+    .pbar::after{content:"";display:block;height:100%;width:35%;background:var(--accent);animation:slide 1.4s ease-in-out infinite}
+    @keyframes slide{0%{margin-left:-35%}100%{margin-left:100%}}
+
+    /* ── Workbench (main flex row) ───────────────────────────────── */
+    .workbench{flex:1;display:flex;overflow:hidden;min-height:0}
+
+    /* ── Sidebar ─────────────────────────────────────────────────── */
+    .sidebar{
+      width:230px;min-width:130px;max-width:380px;
+      display:flex;flex-direction:column;
+      background:var(--bg1);border-right:1px solid var(--bdr);flex-shrink:0;overflow:hidden
+    }
+    .sidebar-head{
+      padding:5px 10px;border-bottom:1px solid var(--bdr);flex-shrink:0;
+      display:flex;align-items:center;justify-content:space-between
+    }
+    .sidebar-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t1)}
+    .file-tree{flex:1;overflow-y:auto;padding:4px 0}
+    .tree-empty{padding:12px 10px;font-size:12px;color:var(--t2);line-height:1.6;text-align:center}
+    .tree-item{
+      display:flex;align-items:center;gap:5px;
+      padding:2px 0 2px 8px;cursor:pointer;font-size:12px;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+      user-select:none;border-radius:var(--r2);margin:1px 4px;
+      transition:background .1s
+    }
+    .tree-item:hover{background:var(--bg2)}
+    .tree-item.active{background:var(--accentD);color:var(--accent)}
+    .tree-icon{width:14px;text-align:center;flex-shrink:0;font-size:11px}
+    .tree-name{flex:1;overflow:hidden;text-overflow:ellipsis}
+    .tree-unsaved::after{content:"●";color:var(--yellow);font-size:8px;margin-left:auto;padding-right:4px}
+    .tree-dir-label{color:var(--yellow);font-weight:600}
+    .sidebar-footer{
+      flex-shrink:0;padding:7px 8px;border-top:1px solid var(--bdr);display:flex;gap:5px
+    }
+
+    /* ── Drag handles ────────────────────────────────────────────── */
+    .h-drag{width:4px;cursor:col-resize;background:transparent;flex-shrink:0;transition:background .2s}
+    .h-drag:hover,.h-drag.on{background:var(--accent)}
+    .v-drag{height:4px;cursor:row-resize;background:var(--bdr);flex-shrink:0;transition:background .2s}
+    .v-drag:hover,.v-drag.on{background:var(--accent)}
+
+    /* ── Center panel (editor + chat, flex-col) ──────────────────── */
+    .center{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+
+    /* ── Tab bar ─────────────────────────────────────────────────── */
+    .tabs{
+      display:flex;align-items:center;background:var(--bg1);
+      border-bottom:1px solid var(--bdr);overflow-x:auto;
+      flex-shrink:0;min-height:35px;scrollbar-width:none
+    }
+    .tabs::-webkit-scrollbar{display:none}
+    .tab{
+      display:flex;align-items:center;gap:5px;padding:0 10px;
+      height:35px;cursor:pointer;font-size:12px;flex-shrink:0;
+      border-right:1px solid var(--bdr);color:var(--t1);
+      white-space:nowrap;position:relative;transition:background .1s,color .1s
+    }
+    .tab:hover{background:var(--bg2);color:var(--t0)}
+    .tab.active{background:var(--bg0);color:var(--t0)}
+    .tab.active::after{content:"";position:absolute;bottom:0;left:0;right:0;height:2px;background:var(--accent)}
+    .tab-close{
+      width:14px;height:14px;border-radius:3px;display:flex;
+      align-items:center;justify-content:center;font-size:10px;
+      opacity:0;cursor:pointer;flex-shrink:0;transition:opacity .15s
+    }
+    .tab:hover .tab-close,.tab.active .tab-close{opacity:.65}
+    .tab-close:hover{opacity:1!important;background:var(--bdr2)}
+    .tab-ph{padding:0 12px;font-size:12px;color:var(--t2);align-self:center}
+
+    /* ── Editor section ──────────────────────────────────────────── */
+    .editor-section{display:flex;flex:1;overflow:hidden;min-height:80px;position:relative}
+    .line-nums{
+      width:44px;background:var(--bg1);border-right:1px solid var(--bdr);
+      font-family:var(--mono);font-size:12px;line-height:20px;
+      padding:12px 6px 12px 0;text-align:right;overflow:hidden;
+      pointer-events:none;user-select:none;flex-shrink:0;color:var(--t2)
+    }
+    .line-nums span{display:block;height:20px}
+    .code-ta{
+      flex:1;background:var(--bg0);color:var(--t0);
+      font-family:var(--mono);font-size:12px;line-height:20px;
+      padding:12px;border:none;outline:none;resize:none;
+      tab-size:2;overflow:auto;white-space:pre
+    }
+    .editor-ph{
+      position:absolute;inset:0;display:flex;flex-direction:column;
+      align-items:center;justify-content:center;gap:8px;
+      color:var(--t2);font-size:12px;pointer-events:none
+    }
+    .editor-ph .ico{font-size:32px}
+
+    /* ── Chat panel ──────────────────────────────────────────────── */
+    .chat-panel{
+      display:flex;flex-direction:column;background:var(--bg1);
+      border-top:1px solid var(--bdr);min-height:60px
+    }
+    .chat-head{
+      flex-shrink:0;display:flex;align-items:center;
+      padding:4px 10px;border-bottom:1px solid var(--bdr);gap:5px
+    }
+    .chat-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t1);flex:1}
+    .chat-msgs{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:5px}
+    .msg{padding:6px 10px;border-radius:var(--r);font-size:12px;line-height:1.5}
+    .msg.user{background:var(--accentD);border:1px solid rgba(88,166,255,.2);align-self:flex-end;max-width:90%}
+    .msg.assistant{background:var(--bg2);border:1px solid var(--bdr);align-self:flex-start;max-width:96%}
+    .msg.sys{color:var(--t1);font-size:11px;align-self:center;text-align:center;padding:3px 8px}
+    .msg.err{background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.25);color:var(--red)}
+    .msg-role{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--t1);margin-bottom:3px}
+    .msg.user .msg-role{color:var(--accent)}
+    .msg.assistant .msg-role{color:var(--green)}
+    .artifact-tag{
+      display:inline-flex;align-items:center;gap:4px;
+      background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.3);
+      border-radius:var(--r2);padding:2px 7px;font-size:11px;color:var(--green);margin-top:5px
+    }
+    .dot-anim{display:inline-flex;gap:3px;align-items:center}
+    .dot-anim span{width:5px;height:5px;border-radius:50%;background:var(--t1);animation:dot 1s ease-in-out infinite}
+    .dot-anim span:nth-child(2){animation-delay:.2s}
+    .dot-anim span:nth-child(3){animation-delay:.4s}
+    @keyframes dot{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}
+    .chat-input-row{flex-shrink:0;display:flex;gap:6px;padding:6px 8px;align-items:flex-end}
+    .chat-ta{
+      flex:1;resize:none;height:56px;max-height:120px;
+      background:var(--bg3);border:1px solid var(--bdr);border-radius:var(--r);
+      color:var(--t0);padding:7px 9px;font-size:12px;outline:none;
+      font-family:var(--sans);line-height:1.5;transition:border-color .15s
+    }
+    .chat-ta:focus{border-color:var(--accent)}
+    .send-btn{
+      width:30px;height:30px;border-radius:var(--r2);
+      background:var(--accent);border:none;cursor:pointer;color:#0d1117;
+      font-size:15px;font-weight:700;display:flex;align-items:center;justify-content:center;
+      flex-shrink:0;transition:background .15s
+    }
+    .send-btn:hover:not(:disabled){background:var(--accent2)}
+    .send-btn:disabled{opacity:.45;cursor:not-allowed}
+    .chat-hint{font-size:10px;color:var(--t2);padding:0 8px 5px}
+
+    /* ── Preview panel ───────────────────────────────────────────── */
+    .preview-panel{
+      width:420px;min-width:200px;max-width:800px;
+      display:flex;flex-direction:column;
+      border-left:1px solid var(--bdr);flex-shrink:0
+    }
+    .preview-head{
+      flex-shrink:0;background:var(--bg1);border-bottom:1px solid var(--bdr);
+      padding:4px 10px;display:flex;align-items:center;gap:5px
+    }
+    .preview-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--t1);flex:1}
+    .preview-ph{
+      flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+      gap:8px;background:var(--bg0);color:var(--t2);font-size:12px
+    }
+    .preview-ph .ico{font-size:28px}
+    .preview-frame{flex:1;border:none;width:100%;background:#fff}
+
+    /* ── Settings modal ──────────────────────────────────────────── */
+    .modal-bg{
+      position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:1000;
+      display:flex;align-items:center;justify-content:center
+    }
+    .modal{
+      background:var(--bg1);border:1px solid var(--bdr2);border-radius:var(--r);
+      width:430px;max-width:95vw;max-height:85vh;display:flex;flex-direction:column;overflow:hidden
+    }
+    .modal-head{
+      padding:12px 16px;border-bottom:1px solid var(--bdr);
+      display:flex;align-items:center;justify-content:space-between
+    }
+    .modal-head h3{font-size:14px}
+    .modal-body{padding:16px;overflow-y:auto;flex:1}
+    .modal-foot{padding:10px 16px;border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px}
+
+    /* ── Forms ───────────────────────────────────────────────────── */
+    .fg{margin-bottom:10px}
+    .fg:last-child{margin-bottom:0}
+    label{display:block;font-size:11px;color:var(--t1);margin-bottom:3px}
+    input[type=text],input[type=password],select{
+      width:100%;background:var(--bg3);border:1px solid var(--bdr);
+      border-radius:var(--r2);color:var(--t0);padding:5px 9px;font-size:12px;outline:none
+    }
+    input:focus,select:focus{border-color:var(--accent)}
+    .pw-wrap{position:relative}
+    .pw-wrap input{padding-right:30px}
+    .pw-eye{position:absolute;right:7px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--t1);font-size:12px}
+    .pw-eye:hover{color:var(--t0)}
+    .row2{display:flex;gap:8px}
+    .row2 .fg{flex:1}
+
+    /* ── Buttons ─────────────────────────────────────────────────── */
+    .btn{
+      padding:5px 11px;border-radius:var(--r2);border:none;cursor:pointer;
+      font-size:12px;font-weight:500;display:inline-flex;align-items:center;gap:4px;
+      transition:opacity .15s,background .15s;white-space:nowrap
+    }
+    .btn:disabled{opacity:.4;cursor:not-allowed}
+    .btn-ghost{background:var(--bg2);color:var(--t0);border:1px solid var(--bdr)}
+    .btn-ghost:hover:not(:disabled){background:var(--bg3)}
+    .btn-accent{background:var(--accent);color:#0d1117}
+    .btn-accent:hover:not(:disabled){background:var(--accent2)}
+    .btn-green{background:var(--green);color:#0d1117}
+    .btn-green:hover:not(:disabled){opacity:.85}
+    .btn-sm{padding:3px 7px;font-size:11px}
+    .btn-icon{padding:4px 6px;font-size:12px}
+
+    /* ── Toast ───────────────────────────────────────────────────── */
+    .toasts{position:fixed;bottom:14px;right:14px;z-index:2000;display:flex;flex-direction:column;gap:5px}
+    .toast{
+      background:var(--bg2);border:1px solid var(--bdr);border-radius:var(--r);
+      padding:7px 13px;font-size:12px;max-width:320px;line-height:1.4;animation:tin .2s ease
+    }
+    .toast.ok{border-color:var(--green);color:var(--green)}
+    .toast.err{border-color:var(--red);color:var(--red)}
+    @keyframes tin{from{transform:translateY(8px);opacity:0}to{transform:translateY(0);opacity:1}}
+
+    /* ── Misc ────────────────────────────────────────────────────── */
+    .hidden{display:none!important}
+    ::-webkit-scrollbar{width:5px;height:5px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:var(--bdr2);border-radius:3px}
+    ::-webkit-scrollbar-thumb:hover{background:#555}
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Top bar -->
+  <header class="topbar">
+    <span class="tb-logo">🤖</span>
+    <span class="tb-title">AI Studio</span>
+    <span class="tb-sep">|</span>
+    <input class="tb-proj" id="projName" type="text" value="my-app" title="Project name (press Enter to rename)" onchange="renameProject(this.value)" />
+    <div class="tb-space"></div>
+    <div class="status">
+      <div class="s-dot" id="sDot"></div>
+      <span id="sTxt">Initialising…</span>
+    </div>
+  </header>
+
+  <div class="pbar" id="pbar"></div>
+
+  <!-- Workbench -->
+  <div class="workbench">
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <span class="sidebar-label">Files</span>
+        <div style="display:flex;gap:3px">
+          <button class="btn btn-icon btn-ghost" onclick="newFile()" title="New file">＋</button>
+          <button class="btn btn-icon btn-ghost" onclick="newFolder()" title="New folder">📁</button>
+        </div>
+      </div>
+      <div class="file-tree" id="fileTree">
+        <div class="tree-empty">No files yet.<br>Ask AI to generate your app.</div>
+      </div>
+      <div class="sidebar-footer">
+        <button class="btn btn-ghost btn-sm" style="flex:1" onclick="newProject()">🆕 New</button>
+        <button class="btn btn-ghost btn-sm" style="flex:1" onclick="openProject()">📂 Open</button>
+      </div>
+    </aside>
+
+    <div class="h-drag" id="hDragL" onmousedown="startHDrag(event,'sidebar','hDragL')"></div>
+
+    <!-- Center: tabs + editor + chat -->
+    <div class="center">
+      <div class="tabs" id="tabs">
+        <span class="tab-ph" id="tabPh">No file open — select from the tree or ask AI</span>
+      </div>
+
+      <div class="editor-section" id="editorSection">
+        <div class="line-nums" id="lineNums" style="display:none"></div>
+        <textarea class="code-ta" id="codeTa" style="display:none" spellcheck="false"
+          oninput="onCodeInput()" onkeydown="onCodeKeydown(event)" onscroll="syncScroll()"></textarea>
+        <div class="editor-ph" id="editorPh">
+          <div class="ico">📝</div>
+          <div>Select a file from the tree or<br>ask the AI to build something</div>
+        </div>
+      </div>
+
+      <div class="v-drag" id="vDrag" onmousedown="startVDrag(event)"></div>
+
+      <div class="chat-panel" id="chatPanel" style="height:230px">
+        <div class="chat-head">
+          <span class="chat-label">💬 Chat</span>
+          <button class="btn btn-ghost btn-sm" onclick="openSettings()">⚙</button>
+          <button class="btn btn-ghost btn-sm" onclick="clearChat()">Clear</button>
+        </div>
+        <div class="chat-msgs" id="chatMsgs"></div>
+        <div class="chat-input-row">
+          <textarea class="chat-ta" id="chatInput"
+            placeholder="Describe your app or ask for changes… e.g. 'Create a markdown editor with file open/save using Tauri dialogs'"
+            onkeydown="onChatKey(event)"></textarea>
+          <button class="send-btn" id="sendBtn" onclick="sendMsg()">↑</button>
+        </div>
+        <div class="chat-hint">Ctrl+Enter to send · AI generates multi-file projects with Tauri v2 API support</div>
+      </div>
+    </div>
+
+    <div class="h-drag" id="hDragR" onmousedown="startHDrag(event,'previewPanel','hDragR')"></div>
+
+    <!-- Preview panel -->
+    <div class="preview-panel" id="previewPanel">
+      <div class="preview-head">
+        <span class="preview-label">👁 Preview</span>
+        <button class="btn btn-ghost btn-sm" onclick="refreshPreview()" title="Refresh">⟳</button>
+        <button class="btn btn-ghost btn-sm" onclick="popPreview()" title="Pop out">⤢</button>
+        <button class="btn btn-green btn-sm" onclick="packageApp()">📦 Package</button>
+      </div>
+      <div class="preview-ph" id="previewPh">
+        <div class="ico">🖥</div>
+        <div>Preview appears after AI generates files</div>
+      </div>
+      <iframe class="preview-frame hidden" id="previewFrame"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-pointer-lock"
+        title="App Preview"></iframe>
+    </div>
+
+  </div><!-- /workbench -->
+</div><!-- /app -->
+
+<!-- Settings modal -->
+<div class="modal-bg hidden" id="settingsModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>⚙ Provider Settings</h3>
+      <button class="btn btn-ghost btn-sm" onclick="closeSettings()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="fg">
+        <label>LLM Provider</label>
+        <select id="providerSel" onchange="onProviderChange()">
+          <option value="openai">OpenAI (ChatGPT)</option>
+          <option value="anthropic">Anthropic (Claude)</option>
+          <option value="deepseek">DeepSeek</option>
+          <option value="ollama">Ollama (Local)</option>
+          <option value="custom">Custom / Compatible</option>
+        </select>
+      </div>
+      <div class="fg" id="apiKeyFg">
+        <label>API Key</label>
+        <div class="pw-wrap">
+          <input type="password" id="apiKeyIn" placeholder="sk-…" autocomplete="off" />
+          <button class="pw-eye" onclick="togglePw()">👁</button>
+        </div>
+      </div>
+      <div class="row2">
+        <div class="fg" style="flex:1">
+          <label>Model</label>
+          <select id="modelSel"></select>
+        </div>
+      </div>
+      <div class="fg hidden" id="baseUrlFg">
+        <label>Base URL</label>
+        <input type="text" id="baseUrlIn" placeholder="https://…/v1/chat/completions" />
+      </div>
+      <div class="fg hidden" id="customModelFg">
+        <label>Custom Model Name</label>
+        <input type="text" id="customModelIn" placeholder="gpt-4o" />
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-accent" onclick="saveSettings();closeSettings()">Save</button>
+      <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════
+   PakePlus AI Studio  —  Dyad / Bolt.new inspired multi-file IDE
+   ════════════════════════════════════════════════════════════════ */
+
+// ── Provider catalogue ────────────────────────────────────────────
+const PROVIDERS = {
+  openai:    { models:["gpt-4o","gpt-4o-mini","gpt-4-turbo","o1-mini","gpt-3.5-turbo"],
+               url:"https://api.openai.com/v1/chat/completions", needKey:true },
+  anthropic: { models:["claude-3-5-sonnet-20241022","claude-3-opus-20240229","claude-3-haiku-20240307"],
+               url:"https://api.anthropic.com/v1/messages", needKey:true },
+  deepseek:  { models:["deepseek-chat","deepseek-reasoner"],
+               url:"https://api.deepseek.com/v1/chat/completions", needKey:true },
+  ollama:    { models:["qwen2.5-coder:7b","codellama","llama3.2","deepseek-coder-v2","gemma2"],
+               url:"http://localhost:11434/v1/chat/completions", needKey:false },
+  custom:    { models:[], url:"", needKey:true }
+};
+
+// ── File-type icons ───────────────────────────────────────────────
+const FICONS = {
+  html:"🌐",htm:"🌐",css:"🎨",js:"⚡",ts:"📘",jsx:"⚛",tsx:"⚛",
+  json:"📋",md:"📄",txt:"📄",svg:"🖼",png:"🖼",jpg:"🖼",vue:"💚",
+  sh:"🔧",yaml:"📋",yml:"📋",toml:"📋"
+};
+const fIcon = p => FICONS[p.split('.').pop()?.toLowerCase()] || "📄";
+const basename = p => p.split(/[/\\]/).pop() || p;
+const dirOf = p => { const i = p.lastIndexOf('/'); return i < 0 ? '' : p.slice(0,i); };
+const joinP = (...a) => a.filter(Boolean).join('/').replace(/\/+/g,'/');
+
+// ── Tauri detection ───────────────────────────────────────────────
+const isTauri = typeof window.__TAURI__ !== 'undefined';
+const invoke = isTauri ? window.__TAURI__.core.invoke : null;
+
+// ── App state ─────────────────────────────────────────────────────
+const S = {
+  project: {
+    name: 'my-app',
+    dir:  '',              // absolute path in Tauri mode
+    files: {},             // { 'index.html': '...' }
+    openTabs: [],          // ordered list of open file paths
+    activeTab: null,
+    unsaved: new Set()     // paths with unsaved in-memory changes
+  },
+  chat: { messages: [], busy: false, unlisten: [] },
+  preview: { port: null, blobUrl: null },
+  provider: { provider:'openai', apiKey:'', model:'gpt-4o', baseUrl:'', customModel:'' }
+};
+
+// ── DOM helpers ───────────────────────────────────────────────────
+const $  = s => document.querySelector(s);
+const id = i => document.getElementById(i);
+function setStatus(type, text) {
+  id('sDot').className = 's-dot ' + type;
+  id('sTxt').textContent = text;
+}
+function setBusy(v) {
+  S.chat.busy = v;
+  id('sendBtn').disabled = v;
+  id('chatInput').disabled = v;
+  id('pbar').classList.toggle('show', v);
+  setStatus(v ? 'working' : 'ready', v ? 'Generating…' : 'Ready');
+}
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+let _toastT;
+function toast(msg, type='ok', dur=4500) {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  id('toasts').appendChild(el);
+  setTimeout(() => { el.style.opacity='0'; el.style.transition='opacity .3s'; setTimeout(()=>el.remove(),320); }, dur);
+}
+
+// ── Settings ──────────────────────────────────────────────────────
+function saveSettings() {
+  const p = S.provider;
+  p.provider    = id('providerSel').value;
+  p.apiKey      = id('apiKeyIn').value;
+  p.model       = id('modelSel').value || id('customModelIn').value;
+  p.baseUrl     = id('baseUrlIn').value;
+  p.customModel = id('customModelIn').value;
+  localStorage.setItem('pp_studio2', JSON.stringify(p));
+  renameProject(id('projName').value);
+}
+function loadSettings() {
+  try { Object.assign(S.provider, JSON.parse(localStorage.getItem('pp_studio2') || '{}')); } catch(_) {}
+  const saved = localStorage.getItem('pp_studio_proj');
+  if (saved) { try { S.project.name = JSON.parse(saved).name || 'my-app'; } catch(_) {} }
+}
+function applySettingsToUI() {
+  const p = S.provider;
+  id('providerSel').value  = p.provider || 'openai';
+  id('apiKeyIn').value     = p.apiKey   || '';
+  id('baseUrlIn').value    = p.baseUrl  || '';
+  id('customModelIn').value = p.customModel || '';
+  id('projName').value     = S.project.name;
+  onProviderChange(p.model);
+}
+function onProviderChange(restore) {
+  const pname = id('providerSel').value;
+  const cfg   = PROVIDERS[pname];
+  const isCust = pname === 'custom', isOlla = pname === 'ollama';
+  const sel = id('modelSel');
+  sel.innerHTML = '';
+  cfg.models.forEach(m => { const o = document.createElement('option'); o.value = o.textContent = m; sel.appendChild(o); });
+  if (restore) sel.value = restore;
+  if (!sel.value && cfg.models.length) sel.value = cfg.models[0];
+  id('apiKeyFg').classList.toggle('hidden',  !cfg.needKey);
+  id('baseUrlFg').classList.toggle('hidden', !isCust && !isOlla);
+  id('customModelFg').classList.toggle('hidden', !isCust);
+  if (isOlla && !id('baseUrlIn').value) id('baseUrlIn').value = cfg.url;
+}
+function togglePw() { const i=id('apiKeyIn'); i.type = i.type==='password'?'text':'password'; }
+function openSettings()  { id('settingsModal').classList.remove('hidden'); applySettingsToUI(); }
+function closeSettings() { id('settingsModal').classList.add('hidden'); }
+
+// ── Project ───────────────────────────────────────────────────────
+function renameProject(name) {
+  S.project.name = (name || 'my-app').trim();
+  id('projName').value = S.project.name;
+  localStorage.setItem('pp_studio_proj', JSON.stringify({ name: S.project.name }));
+}
+
+async function initProject(name, dir) {
+  // Stop existing preview server
+  stopPreview();
+  S.project.name     = name || 'my-app';
+  S.project.dir      = dir  || '';
+  S.project.files    = {};
+  S.project.openTabs = [];
+  S.project.activeTab = null;
+  S.project.unsaved   = new Set();
+  id('projName').value = S.project.name;
+  localStorage.setItem('pp_studio_proj', JSON.stringify({ name: S.project.name }));
+  renderFileTree();
+  renderTabs();
+  updateEditor(null);
+  addSysMsg(`Project "${S.project.name}" ready`);
+}
+
+async function newProject() {
+  const name = prompt('New project name:', 'my-app');
+  if (!name) return;
+  let dir = '';
+  if (isTauri) {
+    try {
+      const base = await window.__TAURI__.path.appDataDir();
+      dir = joinP(base, 'llm-pages', name.replace(/[^a-zA-Z0-9\-_]/g,'-'));
+      await window.__TAURI__.fs.mkdir(dir, { recursive: true });
+    } catch(e) { console.warn('mkdir failed', e); }
+  }
+  await initProject(name, dir);
+}
+
+async function openProject() {
+  if (!isTauri || !window.__TAURI__.dialog) {
+    toast('Opening projects requires Tauri environment', 'err'); return;
+  }
+  const dir = await window.__TAURI__.dialog.open({ directory:true, title:'Open Project' });
+  if (!dir) return;
+  const name = String(dir).replace(/\\/g,'/').split('/').pop() || 'project';
+  await initProject(name, dir);
+
+  // Load existing files via Rust command
+  try {
+    const entries = await invoke('read_project_files', { projectDir: dir });
+    for (const { path, content } of entries) S.project.files[path] = content;
+    renderFileTree();
+    if (S.project.files['index.html']) openFile('index.html');
+    await refreshPreview();
+    toast(`Opened "${name}" (${entries.length} files)`);
+  } catch(e) { toast(`Read project failed: ${e}`, 'err'); }
+}
+
+// ── File operations ───────────────────────────────────────────────
+function setFile(relPath, content) {
+  S.project.files[relPath] = content;
+  S.project.unsaved.add(relPath);
+  // Sync editor if this file is currently open
+  if (relPath === S.project.activeTab) {
+    const ta = id('codeTa');
+    if (ta.value !== content) { ta.value = content; updateLineNums(); }
+  }
+  renderFileTree();
+  scheduleAutoSave(relPath);
+}
+
+async function saveFileToDisk(relPath) {
+  if (!isTauri || !S.project.dir) return;
+  const content = S.project.files[relPath];
+  if (content === undefined) return;
+  try {
+    await invoke('write_project_file', {
+      projectDir: S.project.dir,
+      relPath,
+      content
+    });
+    S.project.unsaved.delete(relPath);
+    renderTabs();
+  } catch(e) { console.warn('save failed', relPath, e); }
+}
+
+async function saveAllFiles() {
+  for (const p of Object.keys(S.project.files)) await saveFileToDisk(p);
+}
+
+const _autoSave = {};
+function scheduleAutoSave(relPath) {
+  clearTimeout(_autoSave[relPath]);
+  _autoSave[relPath] = setTimeout(() => saveFileToDisk(relPath), 1500);
+}
+
+function deleteFile(relPath) {
+  if (!confirm(`Delete "${relPath}"?`)) return;
+  delete S.project.files[relPath];
+  S.project.unsaved.delete(relPath);
+  closeTab(relPath);
+  renderFileTree();
+  toast(`Deleted ${relPath}`);
+}
+
+// ── File tree ─────────────────────────────────────────────────────
+function buildTree(files) {
+  const root = {};
+  Object.keys(files).sort().forEach(p => {
+    const parts = p.split('/');
+    let node = root;
+    parts.forEach((part, i) => {
+      if (i === parts.length - 1) { node[part] = null; }
+      else { if (!node[part] || node[part] === null) node[part] = {}; node = node[part]; }
+    });
+  });
+  return root;
+}
+
+function renderNode(name, node, fullPath, depth) {
+  const isFile = node === null;
+  const indent = depth * 14 + 6;
+  const active = isFile && fullPath === S.project.activeTab;
+  const unsaved = isFile && S.project.unsaved.has(fullPath);
+
+  if (isFile) {
+    return `<div class="tree-item${active?' active':''}${unsaved?' tree-unsaved':''}"
+              data-path="${esc(fullPath)}" style="padding-left:${indent}px"
+              onclick="openFile('${esc(fullPath)}')"
+              oncontextmenu="treeCtx(event,'${esc(fullPath)}')"
+              title="${esc(fullPath)}"
+            ><span class="tree-icon">${fIcon(name)}</span
+            ><span class="tree-name">${esc(name)}</span></div>`;
+  }
+  // Directory
+  const sorted = Object.entries(node).sort(([,a],[,b]) => (a===null?1:-1) - (b===null?1:-1));
+  return `<div class="tree-item" style="padding-left:${indent}px;cursor:default">
+            <span class="tree-icon">📁</span
+            ><span class="tree-name tree-dir-label">${esc(name)}</span>
+          </div>
+          ${sorted.map(([k,v]) => renderNode(k, v, fullPath ? fullPath+'/'+k : k, depth+1)).join('')}`;
+}
+
+function renderFileTree() {
+  const el = id('fileTree');
+  const keys = Object.keys(S.project.files);
+  if (!keys.length) {
+    el.innerHTML = '<div class="tree-empty">No files yet.<br>Ask AI to generate your app.</div>';
+    return;
+  }
+  const tree = buildTree(S.project.files);
+  el.innerHTML = Object.entries(tree)
+    .sort(([,a],[,b]) => (a===null?1:-1) - (b===null?1:-1))
+    .map(([k,v]) => renderNode(k, v, k, 0))
+    .join('');
+}
+
+function treeCtx(e, path) {
+  e.preventDefault();
+  if (confirm(`Delete "${path}"?`)) deleteFile(path);
+}
+
+function newFile() {
+  const p = prompt('File path (e.g. src/utils.js):');
+  if (!p) return;
+  const clean = p.trim().replace(/^\//,'');
+  if (!clean) return;
+  setFile(clean, '');
+  renderFileTree();
+  openFile(clean);
+}
+
+function newFolder() {
+  const p = prompt('Folder name:');
+  if (!p) return;
+  setFile(p.trim().replace(/^\//,'') + '/.gitkeep', '');
+  renderFileTree();
+}
+
+// ── Tabs & editor ─────────────────────────────────────────────────
+function openFile(relPath) {
+  // Flush current tab
+  if (S.project.activeTab) S.project.files[S.project.activeTab] = id('codeTa').value;
+  if (!S.project.openTabs.includes(relPath)) S.project.openTabs.push(relPath);
+  S.project.activeTab = relPath;
+  renderTabs();
+  renderFileTree();
+  updateEditor(relPath);
+}
+
+function closeTab(relPath) {
+  if (S.project.activeTab === relPath) S.project.files[relPath] = id('codeTa').value;
+  const idx = S.project.openTabs.indexOf(relPath);
+  if (idx < 0) return;
+  S.project.openTabs.splice(idx, 1);
+  if (S.project.activeTab === relPath) {
+    const next = S.project.openTabs[Math.min(idx, S.project.openTabs.length-1)] || null;
+    S.project.activeTab = next;
+    updateEditor(next);
+  }
+  renderTabs();
+  renderFileTree();
+}
+
+function renderTabs() {
+  const bar = id('tabs');
+  const ph  = id('tabPh');
+  if (!S.project.openTabs.length) {
+    bar.innerHTML = '';
+    ph && ph.classList.remove('hidden');
+    return;
+  }
+  ph && ph.classList.add('hidden');
+  bar.innerHTML = S.project.openTabs.map(p => {
+    const active  = p === S.project.activeTab;
+    const unsaved = S.project.unsaved.has(p);
+    return `<div class="tab${active?' active':''}" onclick="openFile('${esc(p)}')" title="${esc(p)}">
+              <span>${fIcon(p)}</span>
+              ${esc(basename(p))}${unsaved?'<span style="color:var(--yellow);margin-left:2px">●</span>':''}
+              <span class="tab-close" onclick="event.stopPropagation();closeTab('${esc(p)}')" title="Close">✕</span>
+            </div>`;
+  }).join('');
+}
+
+function updateEditor(relPath) {
+  const ta   = id('codeTa');
+  const ln   = id('lineNums');
+  const ph   = id('editorPh');
+  if (!relPath) {
+    ta.style.display = 'none';
+    ln.style.display = 'none';
+    ph.style.display = '';
+    return;
+  }
+  ta.style.display = '';
+  ln.style.display = '';
+  ph.style.display = 'none';
+  ta.value = S.project.files[relPath] ?? '';
+  updateLineNums();
+  ta.focus();
+}
+
+function updateLineNums() {
+  const ta = id('codeTa');
+  const n  = ta.value.split('\n').length;
+  id('lineNums').innerHTML = Array.from({length:n}, (_,i) => `<span>${i+1}</span>`).join('');
+}
+
+function syncScroll() {
+  id('lineNums').scrollTop = id('codeTa').scrollTop;
+}
+
+function onCodeInput() {
+  if (S.project.activeTab) {
+    S.project.files[S.project.activeTab] = id('codeTa').value;
+    S.project.unsaved.add(S.project.activeTab);
+    scheduleAutoSave(S.project.activeTab);
+    renderTabs();
+  }
+  updateLineNums();
+  schedulePreviewRefresh();
+}
+
+function onCodeKeydown(e) {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const ta = e.target, s = ta.selectionStart, en = ta.selectionEnd;
+    ta.value = ta.value.slice(0,s) + '  ' + ta.value.slice(en);
+    ta.selectionStart = ta.selectionEnd = s + 2;
+    onCodeInput();
+  } else if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    if (S.project.activeTab) {
+      saveFileToDisk(S.project.activeTab).then(() => toast(`Saved ${S.project.activeTab}`));
+    }
+  }
+}
+
+let _previewDebounce;
+function schedulePreviewRefresh() {
+  clearTimeout(_previewDebounce);
+  _previewDebounce = setTimeout(refreshPreview, 1200);
+}
+
+// ── Preview ───────────────────────────────────────────────────────
+function stopPreview() {
+  if (isTauri && S.preview.port) {
+    invoke('stop_server', {}).catch(() => {});
+    S.preview.port = null;
+  }
+  if (S.preview.blobUrl) {
+    URL.revokeObjectURL(S.preview.blobUrl);
+    S.preview.blobUrl = null;
+  }
+}
+
+async function refreshPreview() {
+  const files = S.project.files;
+  if (!Object.keys(files).length) return;
+
+  const frame = id('previewFrame');
+  const ph    = id('previewPh');
+
+  if (isTauri && S.project.dir) {
+    // Tauri mode: save all to disk and use local HTTP server
+    await saveAllFiles();
+    try {
+      if (!S.preview.port) {
+        S.preview.port = await invoke('start_server', { path: S.project.dir, port: 0 });
+      }
+      ph.classList.add('hidden');
+      frame.classList.remove('hidden');
+      // Reload the iframe
+      const url = `http://127.0.0.1:${S.preview.port}/`;
+      if (frame.src === url) frame.contentWindow?.location.reload();
+      else frame.src = url;
+      return;
+    } catch(e) {
+      // Server may already be running; try reload
+      if (S.preview.port) {
+        ph.classList.add('hidden');
+        frame.classList.remove('hidden');
+        frame.contentWindow?.location.reload();
+        return;
+      }
+      console.warn('Server start failed, falling back to blob URL', e);
+    }
+  }
+
+  // Browser/fallback mode: inline CSS+JS and use blob URL
+  const html = buildInlineHtml(files);
+  if (!html) return;
+
+  if (S.preview.blobUrl) URL.revokeObjectURL(S.preview.blobUrl);
+  S.preview.blobUrl = URL.createObjectURL(new Blob([html], { type:'text/html' }));
+  ph.classList.add('hidden');
+  frame.classList.remove('hidden');
+  frame.src = S.preview.blobUrl;
+}
+
+/**
+ * Inline all CSS and JS files referenced in index.html so the
+ * preview works correctly from a Blob URL (no relative imports).
+ */
+function buildInlineHtml(files) {
+  let html = files['index.html'] || files[Object.keys(files).find(p => p.endsWith('.html'))] || '';
+  if (!html) return '';
+
+  // Inline CSS files (handle link href="*.css")
+  html = html.replace(/<link[^>]+href=["']([^"']+\.css)["'][^>]*>/gi, (match, href) => {
+    const rel = href.replace(/^\//, '');
+    const css = files[rel] || '';
+    return css ? `<style>/* ${rel} */\n${css}</style>` : match;
+  });
+
+  // Inline JS files (handle script src="*.js")
+  html = html.replace(/<script([^>]*)src=["']([^"']+\.js)["']([^>]*)><\/script>/gi, (match, pre, src, post) => {
+    const rel = src.replace(/^\//, '');
+    const js = files[rel] || '';
+    return js ? `<script${pre}${post}>\n/* ${rel} */\n${js}\n<\/script>` : match;
+  });
+
+  return html;
+}
+
+function popPreview() {
+  const files = S.project.files;
+  const html = buildInlineHtml(files);
+  if (!html) { toast('No HTML to preview', 'err'); return; }
+  const blob = URL.createObjectURL(new Blob([html], { type:'text/html' }));
+  window.open(blob, '_blank', 'width=1200,height=800,menubar=no,toolbar=no');
+}
+
+// ── Chat messages ─────────────────────────────────────────────────
+function addSysMsg(text) {
+  const el = document.createElement('div');
+  el.className = 'msg sys';
+  el.textContent = text;
+  id('chatMsgs').appendChild(el);
+  scrollChat();
+}
+
+function addMsg(role, content, streaming=false) {
+  const isFirst = !id('chatMsgs').querySelector('.msg:not(.sys)');
+  const el = document.createElement('div');
+  el.className = `msg ${role}`;
+  if (streaming) el.id = 'streamMsg';
+  const label = { user:'🧑 You', assistant:'🤖 AI' }[role] || role;
+  el.innerHTML = `<div class="msg-role">${esc(label)}</div>`
+    + (streaming
+        ? `<div class="msg-body"><div class="dot-anim"><span></span><span></span><span></span></div></div>`
+        : `<div class="msg-body">${esc(content)}</div>`);
+  id('chatMsgs').appendChild(el);
+  scrollChat();
+  return el;
+}
+
+function tickStream(chunk) {
+  const el = id('streamMsg');
+  if (!el) return;
+  const body = el.querySelector('.msg-body');
+  body._full = (body._full || '') + chunk;
+  // Show running length so the DOM stays light during long generations
+  const len = body._full.length;
+  body.textContent = len < 300 ? body._full : `⏳ Generating… (${len} chars)`;
+}
+
+function finaliseStream(full) {
+  const el = id('streamMsg');
+  if (!el) return;
+  el.removeAttribute('id');
+  const artifact = parseArtifact(full);
+  const body = el.querySelector('.msg-body');
+  if (artifact) {
+    const n = Object.keys(artifact.files).length;
+    body.innerHTML = `<span class="artifact-tag">📦 ${artifact.title || 'Project update'} · ${n} file${n!==1?'s':''} changed</span>`;
+  } else {
+    body.textContent = full.length > 300 ? full.slice(0,300)+'…' : full;
+  }
+}
+
+function scrollChat() {
+  const m = id('chatMsgs');
+  m.scrollTop = m.scrollHeight;
+}
+
+function clearChat() {
+  S.chat.messages = [];
+  id('chatMsgs').innerHTML = '';
+  addSysMsg('Chat cleared');
+}
+
+// ── Artifact format (Bolt.new-inspired) ──────────────────────────
+/*
+  AI responses that contain code use this XML envelope:
+
+  <pp:project title="Brief title">
+  <pp:file path="index.html">
+  <!DOCTYPE html>…
+  </pp:file>
+  <pp:file path="style.css">
+  …
+  </pp:file>
+  </pp:project>
+
+  The parser extracts each <pp:file> block.
+  Plain text outside the envelope is shown as a chat message.
+*/
+function parseArtifact(text) {
+  const files = {};
+  // Match <pp:file path="...">…</pp:file>  (. matches \n with /s flag)
+  const fileRe = /<pp:file\s+path="([^"]+)">([\s\S]*?)<\/pp:file>/g;
+  let m;
+  while ((m = fileRe.exec(text)) !== null) {
+    files[m[1].trim()] = m[2].trim();
+  }
+  if (!Object.keys(files).length) return null;
+  const titleM = text.match(/<pp:project[^>]+title="([^"]+)"/);
+  return { title: titleM ? titleM[1] : 'Project', files };
+}
+
+// Legacy: detect raw single-file HTML (for backwards compat)
+function extractSingleHtml(text) {
+  let m = text.match(/```(?:html)?\s*(<!DOCTYPE html[\s\S]*?<\/html>)\s*```/i);
+  if (m) return m[1];
+  m = text.match(/(<!DOCTYPE html[\s\S]*<\/html>)/i);
+  if (m) return m[1];
+  return null;
+}
+
+async function applyArtifact(artifact) {
+  const { files, title } = artifact;
+  let count = 0;
+  for (const [relPath, content] of Object.entries(files)) {
+    setFile(relPath, content);
+    count++;
+  }
+  renderFileTree();
+  // Auto-open index.html if present and no tab is open
+  const main = files['index.html'] ? 'index.html'
+    : Object.keys(files).find(p => p.endsWith('.html'))
+    || Object.keys(files)[0];
+  if (main && !S.project.openTabs.includes(main)) openFile(main);
+  else if (main) renderTabs();
+
+  toast(`✅ ${title || 'Project'}: ${count} file${count!==1?'s':''} updated`);
+  await refreshPreview();
+}
+
+// ── System prompt ─────────────────────────────────────────────────
+const TAURI_APIS = `
+## Available Tauri v2 APIs  (window.__TAURI__ namespace)
+
+  // Filesystem  (tauri-plugin-fs)
+  const { readTextFile, writeTextFile, mkdir, readDir, exists } = window.__TAURI__.fs;
+
+  // Native dialogs  (tauri-plugin-dialog)
+  const { open, save, message, ask, confirm } = window.__TAURI__.dialog;
+
+  // Clipboard  (tauri-plugin-clipboard-manager)
+  const { readText, writeText } = window.__TAURI__.clipboard;
+
+  // OS info  (tauri-plugin-os)
+  const { platform, arch } = window.__TAURI__.os;
+
+  // Notifications  (tauri-plugin-notification)
+  const { sendNotification } = window.__TAURI__.notification;
+
+  // Events  (core)
+  const { listen, emit } = window.__TAURI__.event;
+
+  // Invoke custom Rust commands  (core)
+  const result = await window.__TAURI__.core.invoke('command_name', { param: value });
+
+  // Guard pattern  (always check before using Tauri APIs)
+  const isTauri = typeof window.__TAURI__ !== 'undefined';
+
+  // Open a file with native dialog + read contents:
+  const path = await window.__TAURI__.dialog.open({ filters:[{name:'Text',extensions:['txt','md']}] });
+  if (path) { const text = await window.__TAURI__.fs.readTextFile(path); }
+`;
+
+function buildSystemPrompt() {
+  const fileList = Object.keys(S.project.files);
+  const projectContext = fileList.length
+    ? `## Current project files\n\n` + fileList.map(p => {
+        const content = S.project.files[p];
+        const preview = content.length > 4000
+          ? content.slice(0,4000) + '\n… (truncated)'
+          : content;
+        return `### ${p}\n\`\`\`\n${preview}\n\`\`\``;
+      }).join('\n\n')
+    : '## Current project\nNo files created yet. You are starting fresh.';
+
+  return `You are an expert frontend developer building desktop applications.
+You write HTML, CSS, and JavaScript that runs inside a Tauri v2 webview.
+
+## CRITICAL OUTPUT RULES
+
+When creating or modifying project files, YOU MUST use this exact XML envelope:
+
+<pp:project title="Brief one-line description of what you built">
+<pp:file path="index.html">
+<!DOCTYPE html>
+<html lang="en">
+…complete file contents…
+</pp:file>
+<pp:file path="style.css">
+…complete CSS…
+</pp:file>
+<pp:file path="app.js">
+…complete JavaScript…
+</pp:file>
+</pp:project>
+
+RULES:
+1. Always output COMPLETE file contents — never truncate.
+2. For modifications, include ONLY files that changed.
+3. Separate HTML, CSS, and JavaScript into distinct files (index.html, style.css, app.js).
+4. The HTML file uses: <link rel="stylesheet" href="style.css"> and <script src="app.js"></script>.
+5. Always start with the <pp:project> block, then provide explanation afterwards.
+6. For pure conversation (no code changes), respond without the XML envelope.
+
+## Design requirements
+- Target desktop window (1000×700px minimum).
+- Use CSS custom properties for theming.
+- Include hover states, transitions, and keyboard shortcuts.
+- Handle window resizing gracefully.
+- Show loading states and user feedback.
+
+${TAURI_APIS}
+
+${projectContext}`;
+}
+
+// ── Chat send ─────────────────────────────────────────────────────
+function onChatKey(e) {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendMsg(); }
+}
+
+async function sendMsg() {
+  const ta  = id('chatInput');
+  const txt = ta.value.trim();
+  if (!txt || S.chat.busy) return;
+  ta.value = '';
+  saveSettings();
+
+  addMsg('user', txt);
+  S.chat.messages.push({ role:'user', content: txt });
+
+  const msgs = [
+    { role:'system', content: buildSystemPrompt() },
+    ...S.chat.messages
+  ];
+
+  await generate(msgs);
+}
+
+// ── Generate (streaming LLM call) ────────────────────────────────
+async function generate(msgs) {
+  setBusy(true);
+  addMsg('assistant', '', true);
+  let full = '';
+
+  try {
+    const p      = S.provider;
+    const prov   = p.provider;
+    const apiKey = p.apiKey.trim();
+    const model  = id('modelSel').value || p.customModel || p.model;
+    const baseUrl = p.baseUrl.trim() || PROVIDERS[prov]?.url || '';
+
+    if (!model)   throw new Error('Select a model in ⚙ Settings.');
+    if (!baseUrl) throw new Error('Enter a base URL in ⚙ Settings.');
+    if (PROVIDERS[prov]?.needKey && !apiKey) throw new Error('Enter your API key in ⚙ Settings.');
+
+    const eventId = Date.now().toString();
+
+    if (isTauri && window.__TAURI__.core) {
+      // ── Tauri path: streaming via Rust backend ──────────────────
+      const ul1 = await window.__TAURI__.event.listen(`llm_chunk_${eventId}`, ev => {
+        full += ev.payload;
+        tickStream(ev.payload);
+      });
+      const ul2 = await window.__TAURI__.event.listen(`llm_done_${eventId}`, ev => {
+        full = ev.payload;
+      });
+      S.chat.unlisten.push(ul1, ul2);
+
+      try {
+        await window.__TAURI__.core.invoke('llm_chat_stream', {
+          provider: prov, apiKey, model, messages: msgs, baseUrl, eventId
+        });
+      } finally {
+        ul1(); ul2();
+        S.chat.unlisten = S.chat.unlisten.filter(f => f !== ul1 && f !== ul2);
+      }
+
+    } else {
+      // ── Browser fallback: direct fetch ──────────────────────────
+      full = await fetchStream(prov, apiKey, model, baseUrl, msgs, chunk => {
+        full += chunk;
+        tickStream(chunk);
+      });
+    }
+
+    // Parse and apply
+    finaliseStream(full);
+    S.chat.messages.push({ role:'assistant', content: full });
+
+    const artifact = parseArtifact(full);
+    if (artifact) {
+      await applyArtifact(artifact);
+    } else {
+      // Fallback: try raw single-HTML detection
+      const rawHtml = extractSingleHtml(full);
+      if (rawHtml) {
+        await applyArtifact({ title:'Generated Page', files:{ 'index.html': rawHtml } });
+      }
+    }
+
+  } catch(err) {
+    id('streamMsg')?.remove();
+    const el = addMsg('assistant', `Error: ${err.message}`);
+    el.classList.add('err');
+    toast(`❌ ${err.message}`, 'err');
+  } finally {
+    setBusy(false);
+  }
+}
+
+// ── Browser SSE fetch (fallback) ──────────────────────────────────
+async function fetchStream(prov, apiKey, model, baseUrl, msgs, onChunk) {
+  const hdrs = { 'Content-Type':'application/json' };
+  let body;
+  if (prov === 'anthropic') {
+    hdrs['x-api-key'] = apiKey;
+    hdrs['anthropic-version'] = '2023-06-01';
+    const sys  = msgs.find(m => m.role==='system')?.content || '';
+    const conv = msgs.filter(m => m.role!=='system');
+    body = { model, messages:conv, system:sys, max_tokens:8192, stream:true };
+  } else {
+    hdrs['Authorization'] = `Bearer ${apiKey}`;
+    body = { model, messages:msgs, stream:true, max_tokens:8192 };
+  }
+  const resp = await fetch(baseUrl, { method:'POST', headers:hdrs, body:JSON.stringify(body) });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+
+  const reader = resp.body.getReader();
+  const dec    = new TextDecoder();
+  let buf = '', acc = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream:true });
+    const lines = buf.split('\n'); buf = lines.pop() || '';
+    for (const line of lines) {
+      if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
+      try {
+        const j = JSON.parse(line.slice(6));
+        const piece = prov === 'anthropic'
+          ? j?.delta?.text || ''
+          : j?.choices?.[0]?.delta?.content || '';
+        if (piece) { acc += piece; onChunk(piece); }
+      } catch(_) {}
+    }
+  }
+  return acc;
+}
+
+// ── Package app ───────────────────────────────────────────────────
+async function packageApp() {
+  if (!Object.keys(S.project.files).length) { toast('Generate a project first', 'err'); return; }
+  if (!isTauri) { toast('Packaging requires the Tauri environment', 'err'); return; }
+
+  setBusy(true);
+  try {
+    await saveAllFiles();
+    if (!S.project.dir) {
+      // Save to default location
+      await invoke('save_llm_page', {
+        htmlContent: S.project.files['index.html'] || '',
+        projectName: S.project.name
+      });
+    }
+    toast(`✅ Project saved to:\n${S.project.dir || 'app data/llm-pages/' + S.project.name}\n\nReturn to PakePlus → select this folder as HTML path → Build.`);
+  } catch(e) { toast(`Package failed: ${e}`, 'err'); }
+  finally    { setBusy(false); }
+}
+
+// ── Drag handles ──────────────────────────────────────────────────
+let _hD = false, _hDX = 0, _hDW = 0, _hDEl = null, _hDHandle = null;
+function startHDrag(e, elId, handleId) {
+  _hD = true; _hDX = e.clientX; _hDEl = id(elId); _hDHandle = id(handleId);
+  _hDW = _hDEl.offsetWidth;
+  _hDHandle.classList.add('on');
+  document.addEventListener('mousemove', doHDrag);
+  document.addEventListener('mouseup',   endHDrag);
+  e.preventDefault();
+}
+function doHDrag(e) {
+  if (!_hD) return;
+  const pId = _hDEl.id;
+  // For sidebar: drag right = bigger, for preview: drag left = bigger
+  const delta = pId === 'previewPanel'
+    ? _hDX - e.clientX
+    : e.clientX - _hDX;
+  const minW = parseInt(getComputedStyle(_hDEl).minWidth) || 130;
+  const maxW = parseInt(getComputedStyle(_hDEl).maxWidth) || 800;
+  const w = Math.max(minW, Math.min(maxW, _hDW + delta));
+  _hDEl.style.width = w + 'px';
+}
+function endHDrag() {
+  _hD = false;
+  _hDHandle?.classList.remove('on');
+  document.removeEventListener('mousemove', doHDrag);
+  document.removeEventListener('mouseup',   endHDrag);
+}
+
+let _vD = false, _vDY = 0, _vDH = 0;
+function startVDrag(e) {
+  _vD = true; _vDY = e.clientY; _vDH = id('chatPanel').offsetHeight;
+  id('vDrag').classList.add('on');
+  document.addEventListener('mousemove', doVDrag);
+  document.addEventListener('mouseup',   endVDrag);
+  e.preventDefault();
+}
+function doVDrag(e) {
+  if (!_vD) return;
+  const h = Math.max(60, Math.min(window.innerHeight - 200, _vDH + (_vDY - e.clientY)));
+  id('chatPanel').style.height = h + 'px';
+}
+function endVDrag() {
+  _vD = false;
+  id('vDrag').classList.remove('on');
+  document.removeEventListener('mousemove', doVDrag);
+  document.removeEventListener('mouseup',   endVDrag);
+}
+
+// ── Init ──────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', async () => {
+  loadSettings();
+  applySettingsToUI();
+  setStatus('ready', isTauri ? 'Ready (Tauri)' : 'Ready (browser)');
+
+  // Restore last project if any
+  let dir = '';
+  try {
+    if (isTauri) {
+      const base = await window.__TAURI__.path.appDataDir();
+      dir = joinP(base, 'llm-pages', S.project.name.replace(/[^a-zA-Z0-9\-_]/g,'-'));
+      await window.__TAURI__.fs.mkdir(dir, { recursive: true });
+      S.project.dir = dir;
+      // Load existing files
+      const entries = await invoke('read_project_files', { projectDir: dir });
+      for (const { path, content } of entries) S.project.files[path] = content;
+      if (Object.keys(S.project.files).length) {
+        renderFileTree();
+        if (S.project.files['index.html']) openFile('index.html');
+        refreshPreview();
+      }
+    }
+  } catch(e) { console.warn('init project error', e); }
+
+  renderFileTree();
+  renderTabs();
+  id('chatInput').focus();
+  addSysMsg(`AI Studio ready · project "${S.project.name}"`);
+});
+
+// Close settings modal on overlay click
+id('settingsModal').addEventListener('click', e => {
+  if (e.target === id('settingsModal')) closeSettings();
+});
+</script>
+</body>
+</html>

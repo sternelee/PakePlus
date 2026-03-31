@@ -19,6 +19,7 @@ use std::time::Instant;
 use tauri::WindowEvent;
 use tauri::{
     path::BaseDirectory, utils::config::WindowConfig, AppHandle, Emitter, LogicalSize, Manager,
+    WebviewUrl,
 };
 use tauri_plugin_http::reqwest;
 use walkdir::WalkDir;
@@ -744,4 +745,387 @@ pub fn png_to_icns(base64_png: String, output_dir: String) -> Result<(), String>
     let _ = fs::remove_file(&input_png_path);
     let _ = fs::remove_dir_all(&iconset_path);
     Ok(())
+}
+
+// ─── LLM Studio commands ─────────────────────────────────────────────────────
+
+/// Maximum output tokens sent to every LLM provider.
+const LLM_MAX_TOKENS: u32 = 8192;
+
+/// Stream responses from an LLM provider and forward each chunk as a Tauri
+/// event so the frontend can render the text incrementally.
+///
+/// Supported providers:
+///  - "openai"    – OpenAI-compatible (ChatGPT, DeepSeek, Ollama, custom)
+///  - "anthropic" – Anthropic Claude (uses the Messages API)
+///
+/// The caller must supply a unique `event_id`.  Two events are emitted:
+///  - `llm_chunk_<event_id>`  – payload: one text chunk (String)
+///  - `llm_done_<event_id>`   – payload: full accumulated response (String)
+#[tauri::command]
+pub async fn llm_chat_stream(
+    app: AppHandle,
+    provider: String,
+    api_key: String,
+    model: String,
+    messages: serde_json::Value,
+    base_url: String,
+    event_id: String,
+) -> Result<String, String> {
+    let client = Client::new();
+
+    // Build the JSON request body and headers depending on provider.
+    let is_anthropic = provider == "anthropic";
+
+    let body = if is_anthropic {
+        // Anthropic's Messages API separates the system prompt from the
+        // conversation turns.
+        let system_content = messages
+            .as_array()
+            .and_then(|a| a.iter().find(|m| m["role"] == "system"))
+            .and_then(|m| m["content"].as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let turns: Vec<serde_json::Value> = messages
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter(|m| m["role"] != "system")
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Build the body conditionally so we don't send an empty "system" field,
+        // which the Anthropic API rejects.
+        let mut body = serde_json::json!({
+            "model": model,
+            "messages": turns,
+            "max_tokens": LLM_MAX_TOKENS,
+            "stream": true
+        });
+        if !system_content.is_empty() {
+            body["system"] = serde_json::Value::String(system_content);
+        }
+        body
+    } else {
+        serde_json::json!({
+            "model": model,
+            "messages": messages,
+            "stream": true,
+            "max_tokens": LLM_MAX_TOKENS
+        })
+    };
+
+    let request = if is_anthropic {
+        client
+            .post(&base_url)
+            .header("content-type", "application/json")
+            .header("x-api-key", &api_key)
+            .header("anthropic-version", "2023-06-01")
+    } else {
+        client
+            .post(&base_url)
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {}", api_key))
+    };
+
+    let resp = request
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let err_text = resp.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {}", status, err_text));
+    }
+
+    let mut full_content = String::new();
+    let mut stream = resp.bytes_stream();
+    // Buffer for incomplete SSE lines that arrive across chunk boundaries.
+    let mut line_buf = String::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        line_buf.push_str(&String::from_utf8_lossy(&chunk));
+
+        // Process every complete line in the buffer.
+        while let Some(nl) = line_buf.find('\n') {
+            let raw_line = line_buf[..nl].trim().to_string();
+            line_buf = line_buf[nl + 1..].to_string();
+
+            if raw_line.is_empty() || raw_line == "data: [DONE]" {
+                continue;
+            }
+
+            if let Some(data) = raw_line.strip_prefix("data: ") {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                    let piece = if is_anthropic {
+                        // Anthropic delta format: {"type":"content_block_delta","delta":{"text":"…"}}
+                        json.get("delta")
+                            .and_then(|d| d.get("text"))
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("")
+                            .to_string()
+                    } else {
+                        // OpenAI-compatible delta: {"choices":[{"delta":{"content":"…"}}]}
+                        json.get("choices")
+                            .and_then(|c| c.get(0))
+                            .and_then(|c| c.get("delta"))
+                            .and_then(|d| d.get("content"))
+                            .and_then(|c| c.as_str())
+                            .unwrap_or("")
+                            .to_string()
+                    };
+
+                    if !piece.is_empty() {
+                        full_content.push_str(&piece);
+                        let _ = app.emit(&format!("llm_chunk_{}", event_id), &piece);
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = app.emit(&format!("llm_done_{}", event_id), &full_content);
+    Ok(full_content)
+}
+
+/// Save AI-generated HTML content to the user's app-data directory under a
+/// project-specific subdirectory so PakePlus can later package it.
+///
+/// Returns the absolute path of the saved `index.html`.
+#[tauri::command]
+pub async fn save_llm_page(
+    app: AppHandle,
+    html_content: String,
+    project_name: String,
+) -> Result<String, String> {
+    // Resolve a writable directory:  <AppData>/llm-pages/<project_name>/
+    let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
+
+    // Sanitise the project name so it is safe as a directory component.
+    let safe_name: String = project_name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let safe_name = if safe_name.is_empty() {
+        "llm-page".to_string()
+    } else {
+        safe_name
+    };
+
+    let project_dir = base.join("llm-pages").join(&safe_name);
+    fs::create_dir_all(&project_dir).map_err(|e| e.to_string())?;
+
+    let html_path = project_dir.join("index.html");
+    fs::write(&html_path, &html_content).map_err(|e| e.to_string())?;
+
+    Ok(html_path.to_string_lossy().to_string())
+}
+
+/// Open (or focus) the PakePlus AI Studio window.
+/// The window loads `llm-studio.html` from the frontend distribution.
+#[tauri::command]
+pub async fn open_llm_studio(handle: AppHandle) {
+    const LABEL: &str = "LLMStudio";
+
+    if let Some(win) = handle.get_webview_window(LABEL) {
+        let _ = win.set_focus();
+        return;
+    }
+
+    if let Err(e) =
+        tauri::WebviewWindowBuilder::new(&handle, LABEL, WebviewUrl::App("llm-studio.html".into()))
+            .title("PakePlus AI Studio")
+            .inner_size(1400.0, 900.0)
+            .min_inner_size(900.0, 600.0)
+            .resizable(true)
+            .center()
+            .build()
+    {
+        eprintln!("Failed to open LLM Studio window: {}", e);
+    }
+}
+
+/// Write a single text file inside a project directory.
+///
+/// `project_dir` is the absolute path of the project root.
+/// `rel_path`    is the relative file path (e.g. `"src/app.js"`).
+///
+/// All intermediate directories are created automatically.
+/// Uses `Path::components()` to sanitise the path cross-platform:
+///   - Strips leading `/` and `\` separators.
+///   - Rejects `..` components (path traversal).
+///   - Rejects components that contain `:` (Windows absolute-path injection).
+///   - Verifies the final resolved path starts with `project_dir`.
+/// Returns the absolute path of the written file.
+#[tauri::command]
+pub fn write_project_file(
+    project_dir: String,
+    rel_path: String,
+    content: String,
+) -> Result<String, String> {
+    use std::path::Component;
+
+    let base = PathBuf::from(&project_dir)
+        .canonicalize()
+        .map_err(|e| format!("Invalid project dir: {}", e))?;
+
+    // Normalise separators then walk the component list.
+    let normalised = rel_path.replace('\\', "/");
+    let mut safe = PathBuf::new();
+
+    for comp in Path::new(&normalised).components() {
+        match comp {
+            Component::Normal(c) => {
+                let s = c.to_string_lossy();
+                // Reject Windows drive letters and UNC path components.
+                if s.contains(':') {
+                    return Err(format!("Illegal path component: {}", s));
+                }
+                safe.push(c);
+            }
+            // Skip RootDir, Prefix, and CurDir; reject ParentDir.
+            Component::ParentDir => return Err("Path traversal not allowed".into()),
+            _ => {}
+        }
+    }
+
+    if safe.as_os_str().is_empty() {
+        return Err("Invalid relative path".into());
+    }
+
+    let abs = base.join(&safe);
+
+    // Final containment check: the resolved parent must be inside base.
+    let parent = abs.parent().ok_or("Invalid file path")?;
+    let canon_parent = {
+        // Parent may not exist yet; walk up to the first existing ancestor.
+        let mut p = parent.to_path_buf();
+        while !p.exists() {
+            p = p
+                .parent()
+                .ok_or("Cannot resolve parent directory")?
+                .to_path_buf();
+        }
+        p.canonicalize().map_err(|e| e.to_string())?
+    };
+    if !canon_parent.starts_with(&base) {
+        return Err("Path escapes project directory".into());
+    }
+
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    fs::write(&abs, content.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(abs.to_string_lossy().to_string())
+}
+
+/// Read all text files in a project directory (recursively).
+///
+/// Returns a JSON array of `{ "path": "<relative>", "content": "<text>" }`.
+/// Binary files and hidden entries (`.git`, etc.) are skipped automatically.
+#[tauri::command]
+pub fn read_project_files(project_dir: String) -> Result<Vec<serde_json::Value>, String> {
+    const TEXT_EXTS: &[&str] = &[
+        "html",
+        "htm",
+        "css",
+        "js",
+        "ts",
+        "jsx",
+        "tsx",
+        "json",
+        "md",
+        "txt",
+        "svg",
+        "vue",
+        "yaml",
+        "yml",
+        "toml",
+        "xml",
+        "sh",
+        "env",
+        "gitignore",
+        "py",
+        "rs",
+        "go",
+        "rb",
+        "php",
+    ];
+
+    /// Directory names that should never be walked (build artifacts, large deps).
+    const SKIP_DIRS: &[&str] = &[
+        "node_modules",
+        "target",
+        ".git",
+        "__pycache__",
+        ".cache",
+        "dist",
+        ".next",
+        ".nuxt",
+        "vendor",
+    ];
+
+    let base = PathBuf::from(&project_dir);
+    if !base.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut files: Vec<serde_json::Value> = Vec::new();
+
+    for entry in WalkDir::new(&base)
+        .min_depth(1)
+        .into_iter()
+        .filter_entry(|e| {
+            // Prune skipped directories so WalkDir does not descend into them.
+            let name = e.file_name().to_string_lossy();
+            // Skip hidden entries (names starting with '.') and known large dirs.
+            let is_hidden = name.starts_with('.');
+            let is_skipped = SKIP_DIRS.contains(&name.as_ref());
+            !(is_hidden || is_skipped)
+        })
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let rel = match path.strip_prefix(&base) {
+            Ok(r) => r.to_string_lossy().replace('\\', "/"),
+            Err(_) => continue,
+        };
+
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        if !TEXT_EXTS.contains(&ext.as_str()) {
+            continue;
+        }
+
+        if let Ok(content) = fs::read_to_string(path) {
+            files.push(serde_json::json!({ "path": rel, "content": content }));
+        }
+    }
+
+    files.sort_by(|a, b| {
+        a["path"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["path"].as_str().unwrap_or(""))
+    });
+
+    Ok(files)
 }
